@@ -122,6 +122,19 @@
   </div>
 </div>
 
+<div class="overlay" id="loginCard">
+  <div class="card" style="max-width:460px">
+    <h2>Only 30 seconds? 😕</h2>
+    <p class="hint" style="font-size:16px;line-height:1.5">Spotify only plays the <b>whole song</b> if you are logged into Spotify <b>in this browser</b>. The Spotify app on your computer does not count.</p>
+    <p class="hint" style="font-size:16px;line-height:1.5">1. Click <b>Log in to Spotify</b> and log in.<br>2. Come back to this tab and click <b>I logged in</b>.</p>
+    <div class="row" style="justify-content:center">
+      <a href="https://accounts.spotify.com/login?continue=https%3A%2F%2Fopen.spotify.com%2F" target="_blank"><button class="go">Log in to Spotify</button></a>
+      <button id="loggedInBtn">I logged in</button>
+      <button id="previewOkBtn">Just play 30 seconds</button>
+    </div>
+  </div>
+</div>
+
 <div class="overlay" id="results">
   <div class="card">
     <h2 id="resTitle">Song done!</h2>
@@ -289,9 +302,9 @@ function resize() { const r = devicePixelRatio || 1; W = innerWidth; H = innerHe
 addEventListener('resize', resize); resize();
 
 const LEVELS = {
-  easy:   { approach: 1.7, radius: 52, gap: 0.65 },
-  normal: { approach: 1.3, radius: 46, gap: 0.34 },
-  hard:   { approach: 1.0, radius: 40, gap: 0.2 },
+  easy:   { approach: 1.7, radius: 85, gap: 0.65 },
+  normal: { approach: 1.3, radius: 75, gap: 0.34 },
+  hard:   { approach: 1.0, radius: 65, gap: 0.2 },
 };
 const WIN = { perfect: 0.06, good: 0.13, ok: 0.2 };
 
@@ -354,7 +367,7 @@ function makeNote(t, seed) {
     const a = rnd(seed + 'a') * Math.PI * 2, d = 120 + rnd(seed + 'd') * 180;
     x = G.lastPos.x + Math.cos(a) * d; y = G.lastPos.y + Math.sin(a) * d;
     const m = L.radius + 30;
-    x = Math.min(W - m, Math.max(m, x)); y = Math.min(H - 230, Math.max(m + 70, y));
+    x = Math.min(W - m, Math.max(m, x)); y = Math.min(H - m - 20, Math.max(m + 70, y));
     G.lastPos = { x, y };
   }
   G.notes.push({ t, x, y, key: isKey, done: false });
@@ -487,6 +500,8 @@ function quit() {
   stopMusic(); $('pause').classList.remove('show'); $('results').classList.remove('show');
   G = null; show('library'); drawSongs();
 }
+$('loggedInBtn').onclick = () => { stopMusic(); location.reload(); };
+$('previewOkBtn').onclick = () => { $('loginCard').classList.remove('show'); G.previewOk = true; resume(); };
 $('resumeBtn').onclick = resume; $('restartBtn').onclick = restart; $('quitBtn').onclick = quit;
 $('againBtn').onclick = restart; $('backBtn').onclick = quit;
 addEventListener('blur', () => { if (G && !G.paused && !G.over && $('game').classList.contains('show')) pause(); });
@@ -525,11 +540,15 @@ function loop() {
       ? 'Tip: tap <span class="key">T</span> to the beat so the notes match this song' : '';
   }
 
+  if (G.mode === 'spotify' && spClock.started && spClock.paused && spClock.dur > 31000 && spClock.pos > 28500 && spClock.pos < 31500) spClock.preview = true;
+  if (G.mode === 'spotify' && spClock.preview && !G.previewOk && !G.paused) {
+    pause(); $('pause').classList.remove('show'); $('loginCard').classList.add('show');
+  }
   const running = !G.paused && !G.over && (G.mode === 'file' || spClock.started);
   if (running) {
     spawnNotes(t);
     for (const n of G.notes) if (!n.done && t - n.t > WIN.ok) miss(n);
-    if (G.mode === 'spotify' && spClock.dur && (t * 1000 >= spClock.dur - 400 || (spClock.paused && spClock.pos >= spClock.dur - 1500))) finish();
+    if (G.mode === 'spotify' && spClock.dur && (t * 1000 >= spClock.dur - 400 || (spClock.paused && spClock.pos >= spClock.dur - 1500) || (G.previewOk && spClock.paused && t > 25))) finish();
   }
   G.notes = G.notes.filter(n => !n.done || real - n.hitAt < 400);
   G.pops = G.pops.filter(p => real - p.born < 700);
