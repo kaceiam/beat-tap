@@ -2,8 +2,8 @@
 
 A rhythm game you play in your browser with your Spotify Liked Songs.
 
-- **Blue circles:** click them with your mouse right when the ring shrinks onto them.
-- **Yellow B notes:** press **B** or **Space** right when the square shrinks onto them.
+- **Blue circles:** they fly at you from far away. Click each one with your mouse when it reaches full size.
+- **Yellow B notes:** press **B** right when the square flies onto the B pad.
 
 ## Adding your songs
 1. Open the Spotify app and go to **Liked Songs**.
