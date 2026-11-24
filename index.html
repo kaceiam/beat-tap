@@ -1,0 +1,593 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Beat Tap</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #0d0b1a; color: #f2f0ff; font-family: system-ui, Segoe UI, sans-serif; overflow: hidden; }
+  button { font: inherit; cursor: pointer; border: 0; border-radius: 10px; padding: 8px 14px; background: #2b2550; color: #fff; }
+  button:hover { background: #3c3470; }
+  button.go { background: #ff3d8b; }
+  button.go:hover { background: #ff5c9e; }
+  button.on { outline: 2px solid #ffd23d; }
+  input, textarea { font: inherit; background: #1a1630; color: #fff; border: 1px solid #3a3366; border-radius: 10px; padding: 8px 12px; }
+  .screen { position: fixed; inset: 0; display: none; }
+  .screen.show { display: block; }
+
+  /* Library */
+  #library { overflow-y: auto; padding: 20px; }
+  #library .wrap { max-width: 900px; margin: 0 auto; }
+  h1 { margin: 0 0 4px; font-size: 40px; letter-spacing: 1px; }
+  h1 span { color: #ff3d8b; }
+  .sub { color: #b9b3dd; margin: 0 0 18px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+  #search { flex: 1; min-width: 200px; font-size: 18px; }
+  .panel { background: #17132b; border-radius: 14px; padding: 14px; margin-bottom: 14px; }
+  .panel h3 { margin: 0 0 8px; }
+  #paste { width: 100%; height: 80px; }
+  .songs { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; }
+  .song { display: flex; gap: 10px; align-items: center; background: #1d1838; border-radius: 12px; padding: 8px; cursor: pointer; }
+  .song:hover { background: #2a2350; }
+  .song img, .song .noimg { width: 52px; height: 52px; border-radius: 8px; object-fit: cover; background: #2b2550; flex: none; }
+  .song .t { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .song .b { font-size: 13px; color: #b9b3dd; }
+  .hint { color: #b9b3dd; font-size: 14px; }
+  .key { display: inline-block; background: #2b2550; border-radius: 6px; padding: 0 7px; font-weight: 700; }
+
+  /* Game */
+  #game canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #hud { position: absolute; top: 12px; left: 16px; right: 16px; display: flex; justify-content: space-between; pointer-events: none; font-weight: 700; }
+  #hud .big { font-size: 30px; }
+  #msg { position: absolute; left: 50%; top: 38%; transform: translate(-50%, -50%); text-align: center; font-size: 22px; pointer-events: none; text-shadow: 0 2px 8px #000; }
+  #help { position: absolute; bottom: 12px; left: 16px; color: #b9b3dd; font-size: 14px; pointer-events: none; }
+
+  /* Spotify player box */
+  #spWrap { position: fixed; right: 12px; bottom: 12px; width: 300px; height: 80px; z-index: 5; border-radius: 12px; overflow: hidden; }
+  #spWrap.hide { right: -9999px; }
+
+  /* Pause / results */
+  .overlay { position: fixed; inset: 0; background: #0d0b1acc; display: none; align-items: center; justify-content: center; z-index: 4; }
+  .overlay.show { display: flex; }
+  .card { background: #17132b; border-radius: 18px; padding: 24px 28px; min-width: 320px; text-align: center; }
+  .card h2 { margin: 0 0 10px; }
+  .grade { font-size: 80px; font-weight: 900; color: #ffd23d; line-height: 1; }
+  .stats { margin: 12px 0 18px; line-height: 1.7; }
+</style>
+</head>
+<body>
+
+<!-- ============ SONG LIBRARY ============ -->
+<div id="library" class="screen show">
+  <div class="wrap">
+    <h1>Beat <span>Tap</span></h1>
+    <p class="sub">Click the <b style="color:#3dd6ff">circles</b> with your mouse. Press <span class="key">B</span> or <span class="key">Space</span> for the <b style="color:#ffd23d">B</b> notes. Hit them right on the beat!</p>
+
+    <div class="row">
+      <input id="search" placeholder="🔍 Search your songs..." autocomplete="off">
+      <span class="hint">Level:</span>
+      <button data-diff="easy">Easy</button>
+      <button data-diff="normal">Normal</button>
+      <button data-diff="hard">Hard</button>
+    </div>
+
+    <div class="panel" id="addPanel">
+      <h3>➕ Add your Spotify Liked Songs</h3>
+      <p class="hint" style="margin-top:0">
+        1. Open the <b>Spotify app</b> and go to <b>Liked Songs</b>.<br>
+        2. Click on one song, then press <span class="key">Ctrl</span>+<span class="key">A</span> (picks them all) and <span class="key">Ctrl</span>+<span class="key">C</span> (copies them).<br>
+        3. Click in the box below and press <span class="key">Ctrl</span>+<span class="key">V</span>.
+      </p>
+      <textarea id="paste" placeholder="Paste your Spotify songs here..."></textarea>
+      <div class="row" style="margin:8px 0 0">
+        <button class="go" id="addBtn">Add songs</button>
+        <button id="fileBtn" type="button">🎵 Play my own music file</button>
+        <input type="file" id="file" accept="audio/*" hidden>
+        <span class="hint" id="addMsg"></span>
+      </div>
+    </div>
+
+    <div class="row">
+      <span class="hint" id="count"></span>
+      <span style="flex:1"></span>
+      <span class="hint">Beat sync:</span>
+      <button id="syncMinus">−</button><span id="syncVal" class="hint"></span><button id="syncPlus">+</button>
+      <button id="clearBtn">Remove all songs</button>
+    </div>
+    <div class="songs" id="songs"></div>
+    <p class="hint" style="margin-top:20px">Stay logged into Spotify in this browser, or you only get the first 30 seconds of each song.</p>
+  </div>
+</div>
+
+<!-- ============ GAME ============ -->
+<div id="game" class="screen">
+  <canvas id="cv"></canvas>
+  <div id="hud">
+    <div><div class="big" id="score">0</div><div id="songName"></div></div>
+    <div style="text-align:right"><div class="big" id="combo"></div><div id="acc"></div></div>
+  </div>
+  <div id="msg"></div>
+  <div id="help"></div>
+</div>
+
+<div class="overlay" id="pause">
+  <div class="card">
+    <h2>Paused</h2>
+    <div class="row" style="justify-content:center">
+      <button class="go" id="resumeBtn">Keep playing</button>
+      <button id="restartBtn">Start over</button>
+      <button id="quitBtn">Back to songs</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="results">
+  <div class="card">
+    <h2 id="resTitle">Song done!</h2>
+    <div class="grade" id="resGrade">S</div>
+    <div class="stats" id="resStats"></div>
+    <div class="row" style="justify-content:center">
+      <button class="go" id="againBtn">Play again</button>
+      <button id="backBtn">Back to songs</button>
+    </div>
+  </div>
+</div>
+
+<div id="spWrap" class="hide"><div id="spPlayer"></div></div>
+
+<script>
+// ---------- saved stuff ----------
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('beattap.' + k); return v ? JSON.parse(v) : d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem('beattap.' + k, JSON.stringify(v)); } catch {} }
+};
+let songs = store.get('songs', []);          // list of Spotify track ids
+let info = store.get('info', {});            // id -> { t: title, img }
+let beatInfo = store.get('beats', {});       // id -> { bpm, offset }
+let best = store.get('best', {});            // id+diff -> best score
+let diff = store.get('diff', 'normal');
+let syncMs = store.get('sync', 0);
+
+const $ = id => document.getElementById(id);
+
+// ---------- song library ----------
+function addSongs(text) {
+  const ids = [...text.matchAll(/track[\/:]([A-Za-z0-9]{22})/g)].map(m => m[1]);
+  let added = 0;
+  for (const id of ids) if (!songs.includes(id)) { songs.push(id); added++; }
+  store.set('songs', songs);
+  $('addMsg').textContent = ids.length ? `Added ${added} new song${added === 1 ? '' : 's'}!` : "Couldn't find any Spotify songs in that. Try copying again.";
+  drawSongs(); fetchNames();
+}
+$('addBtn').onclick = () => { addSongs($('paste').value); $('paste').value = ''; };
+$('paste').addEventListener('paste', e => setTimeout(() => { addSongs($('paste').value); $('paste').value = ''; }, 0));
+$('clearBtn').onclick = () => { if (confirm('Remove all songs from the game?')) { songs = []; store.set('songs', songs); drawSongs(); } };
+$('search').oninput = drawSongs;
+
+function drawSongs() {
+  const q = $('search').value.trim().toLowerCase();
+  const box = $('songs'); box.innerHTML = '';
+  const list = songs.filter(id => !q || (info[id]?.t || '').toLowerCase().includes(q));
+  $('count').textContent = songs.length ? `${list.length} of ${songs.length} songs` : '';
+  for (const id of list.slice(0, 300)) {
+    const s = info[id] || {};
+    const d = document.createElement('div'); d.className = 'song';
+    const b = best[id + diff];
+    d.innerHTML = (s.img ? `<img src="${s.img}" loading="lazy">` : '<div class="noimg"></div>') +
+      `<div style="min-width:0"><div class="t"></div><div class="b">${b ? 'Best: ' + b.toLocaleString() : 'Not played yet'}${beatInfo[id] ? ' · ' + Math.round(beatInfo[id].bpm) + ' BPM' : ''}</div></div>`;
+    d.querySelector('.t').textContent = s.t || 'Loading name...';
+    d.onclick = () => startSpotify(id);
+    box.appendChild(d);
+  }
+  if (list.length > 300) box.insertAdjacentHTML('beforeend', `<p class="hint">...and ${list.length - 300} more. Search to find them.</p>`);
+}
+
+// Look up each song's name and picture from Spotify, a few at a time.
+let fetching = false;
+async function fetchNames() {
+  if (fetching) return; fetching = true;
+  const todo = songs.filter(id => !info[id]);
+  let lastDraw = 0;
+  async function worker() {
+    while (todo.length) {
+      const id = todo.shift();
+      try {
+        const r = await fetch('https://open.spotify.com/oembed?url=https://open.spotify.com/track/' + id);
+        const j = await r.json();
+        info[id] = { t: j.title, img: j.thumbnail_url };
+      } catch { info[id] = { t: 'Unknown song' }; }
+      if (Date.now() - lastDraw > 800) { lastDraw = Date.now(); store.set('info', info); drawSongs(); }
+    }
+  }
+  await Promise.all([worker(), worker(), worker(), worker()]);
+  store.set('info', info); drawSongs(); fetching = false;
+}
+
+// Level buttons
+function showDiff() { document.querySelectorAll('[data-diff]').forEach(b => b.classList.toggle('on', b.dataset.diff === diff)); }
+document.querySelectorAll('[data-diff]').forEach(b => b.onclick = () => { diff = b.dataset.diff; store.set('diff', diff); showDiff(); drawSongs(); });
+function showSync() { $('syncVal').textContent = (syncMs > 0 ? '+' : '') + syncMs + ' ms'; }
+$('syncMinus').onclick = () => { syncMs -= 10; store.set('sync', syncMs); showSync(); };
+$('syncPlus').onclick = () => { syncMs += 10; store.set('sync', syncMs); showSync(); };
+
+// ---------- Spotify player ----------
+let sp = null, spReady = false;
+const spClock = { pos: 0, at: 0, paused: true, dur: 0, started: false };
+window.onSpotifyIframeApiReady = API => {
+  API.createController($('spPlayer'), { width: 300, height: 80, uri: 'spotify:track:4cOdK2wGLETKBW3PvgPWqT' }, c => {
+    sp = c; spReady = true;
+    c.addListener('playback_update', e => {
+      const d = e.data, now = performance.now();
+      const guess = spClock.pos + (spClock.paused ? 0 : now - spClock.at);
+      // Only jump the clock when Spotify's time is far from our smooth guess.
+      if (d.isPaused !== spClock.paused || Math.abs(guess - d.position) > 150) { spClock.pos = d.position; spClock.at = now; }
+      spClock.paused = d.isPaused; spClock.dur = d.duration;
+      if (!d.isPaused && d.position > 0) spClock.started = true;
+    });
+  });
+};
+const spScript = document.createElement('script');
+spScript.src = 'https://open.spotify.com/embed/iframe-api/v1'; spScript.async = true;
+document.head.appendChild(spScript);
+
+function spTime() { // song time in seconds
+  const ms = spClock.pos + (spClock.paused ? 0 : performance.now() - spClock.at);
+  return ms / 1000;
+}
+
+// ---------- own music file ----------
+let actx = null, audioBuf = null, src = null, fileStartAt = 0, filePausedAt = 0, fileOnsets = [];
+$('fileBtn').onclick = () => $('file').click();
+$('file').onchange = async () => {
+  const f = $('file').files[0]; if (!f) return;
+  $('addMsg').textContent = 'Listening for the beats...';
+  actx = actx || new AudioContext();
+  try { audioBuf = await actx.decodeAudioData(await f.arrayBuffer()); }
+  catch { $('addMsg').textContent = "That file didn't work. Try an MP3."; return; }
+  fileOnsets = findBeats(audioBuf);
+  $('addMsg').textContent = '';
+  startFile(f.name.replace(/\.[^.]+$/, ''));
+  $('file').value = '';
+};
+
+// Finds the moments where the music suddenly gets louder (drums, beats).
+function findBeats(buf) {
+  const data = buf.getChannelData(0), rate = buf.sampleRate, hop = 512;
+  const energy = [];
+  let lp = 0;
+  for (let i = 0; i + hop < data.length; i += hop) {
+    let e = 0, eLow = 0;
+    for (let j = i; j < i + hop; j++) { const s = data[j]; lp += 0.08 * (s - lp); e += s * s; eLow += lp * lp; }
+    energy.push(Math.sqrt(e / hop) * 0.5 + Math.sqrt(eLow / hop) * 1.5);
+  }
+  const flux = energy.map((e, i) => Math.max(0, e - (energy[i - 1] || 0)));
+  const win = 43, out = [];
+  for (let i = 1; i < flux.length - 1; i++) {
+    let sum = 0, n = 0;
+    for (let k = Math.max(0, i - win); k < Math.min(flux.length, i + win); k++) { sum += flux[k]; n++; }
+    const thr = (sum / n) * 1.6 + 0.004;
+    if (flux[i] > thr && flux[i] >= flux[i - 1] && flux[i] >= flux[i + 1]) out.push({ t: i * hop / rate, s: flux[i] });
+  }
+  return out;
+}
+
+function fileTime() {
+  if (!src) return filePausedAt;
+  return actx.currentTime - fileStartAt;
+}
+
+// ---------- game ----------
+const cv = $('cv'), g = cv.getContext('2d');
+let W = 0, H = 0;
+function resize() { const r = devicePixelRatio || 1; W = innerWidth; H = innerHeight; cv.width = W * r; cv.height = H * r; g.setTransform(r, 0, 0, r, 0, 0); }
+addEventListener('resize', resize); resize();
+
+const LEVELS = {
+  easy:   { approach: 1.5, radius: 52, gap: 0.65 },
+  normal: { approach: 1.15, radius: 46, gap: 0.34 },
+  hard:   { approach: 0.85, radius: 40, gap: 0.2 },
+};
+const WIN = { perfect: 0.06, good: 0.13, ok: 0.2 };
+
+let G = null; // the current game
+function newGame(mode, id, name) {
+  G = { mode, id, name, notes: [], pops: [], score: 0, combo: 0, maxCombo: 0, hits: { perfect: 0, good: 0, ok: 0, miss: 0 },
+        nextT: null, fileIdx: 0, lastPos: { x: W / 2, y: H / 2 }, taps: [], paused: false, over: false, flash: 0, mouse: { x: -99, y: -99 }, endAt: 0 };
+  $('songName').textContent = name;
+  $('score').textContent = '0'; $('combo').textContent = ''; $('acc').textContent = '';
+  $('help').innerHTML = mode === 'spotify'
+    ? 'Tap <span class="key">T</span> along with the beat 4+ times to lock the notes onto the song · <span class="key">Esc</span> pause'
+    : '<span class="key">Esc</span> pause';
+  show('game');
+}
+
+function show(name) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.toggle('show', s.id === name));
+  $('spWrap').classList.toggle('hide', !(name === 'game' && G?.mode === 'spotify'));
+}
+
+function startSpotify(id) {
+  if (!spReady) { alert('Spotify is still loading. Try again in a second!'); return; }
+  newGame('spotify', id, info[id]?.t || 'Spotify song');
+  spClock.started = false; spClock.pos = 0; spClock.paused = true; spClock.dur = 0;
+  show('game');
+  sp.loadUri('spotify:track:' + id);
+  setTimeout(() => sp.play(), 700);
+  G.waitSince = performance.now();
+}
+
+function startFile(name) {
+  newGame('file', null, name);
+  if (src) { try { src.stop(); } catch {} }
+  // Keep beats that are far enough apart for this level.
+  const gap = LEVELS[diff].gap; let last = -9;
+  G.fileNotes = fileOnsets.filter(o => { if (o.t < 1.5 || o.t - last < gap) return false; last = o.t; return true; }).map(o => o.t);
+  playFileFrom(0);
+}
+function playFileFrom(t) {
+  actx.resume();
+  src = actx.createBufferSource(); src.buffer = audioBuf; src.connect(actx.destination);
+  fileStartAt = actx.currentTime - t; src.start(0, t);
+  src.onended = () => { if (G && !G.paused && G.mode === 'file' && fileTime() >= audioBuf.duration - 0.2) finish(); };
+}
+
+function now() { // song time, with the beat-sync fix
+  const t = G.mode === 'spotify' ? spTime() : fileTime();
+  return t - syncMs / 1000;
+}
+
+// a simple random number that is always the same for the same song + beat
+function rnd(seed) { let h = 2166136261; for (const c of seed) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } h ^= h >>> 13; h = Math.imul(h, 0x5bd1e995); h ^= h >>> 15; return (h >>> 0) / 4294967296; }
+
+function makeNote(t, seed) {
+  const L = LEVELS[diff];
+  const isKey = rnd(seed + 'k') < 0.33;
+  let x, y;
+  if (isKey) { x = W / 2; y = H - 110; }
+  else {
+    const a = rnd(seed + 'a') * Math.PI * 2, d = 120 + rnd(seed + 'd') * 180;
+    x = G.lastPos.x + Math.cos(a) * d; y = G.lastPos.y + Math.sin(a) * d;
+    const m = L.radius + 30;
+    x = Math.min(W - m, Math.max(m, x)); y = Math.min(H - 230, Math.max(m + 70, y));
+    G.lastPos = { x, y };
+  }
+  G.notes.push({ t, x, y, key: isKey, done: false });
+}
+
+function spawnNotes(t) {
+  const L = LEVELS[diff];
+  if (G.mode === 'file') {
+    while (G.fileIdx < G.fileNotes.length && G.fileNotes[G.fileIdx] - L.approach <= t) {
+      makeNote(G.fileNotes[G.fileIdx], 'f' + G.fileIdx); G.fileIdx++;
+    }
+    return;
+  }
+  const bi = beatInfo[G.id] || { bpm: 120, offset: 0 };
+  const beat = 60 / bi.bpm;
+  const step = diff === 'hard' ? beat / 2 : beat;
+  if (G.nextT === null) G.nextT = bi.offset + Math.ceil((3 - bi.offset) / step) * step;
+  const endT = spClock.dur ? spClock.dur / 1000 - 2 : 1e9;
+  while (G.nextT <= t + L.approach && G.nextT < endT) {
+    const half = Math.round((G.nextT - bi.offset) / (beat / 2));
+    const seed = G.id + half;
+    let skip;
+    if (diff === 'easy') skip = half % 4 !== 0 || rnd(seed) < 0.1;       // every 2nd beat
+    else if (diff === 'normal') skip = rnd(seed) < 0.15;                  // most beats
+    else skip = half % 2 === 1 ? rnd(seed) < 0.55 : rnd(seed) < 0.08;      // beats + some half beats
+    if (!skip && G.nextT > 2.5) makeNote(G.nextT, seed);
+    G.nextT += step;
+  }
+}
+
+// Lines the beat grid up to where you tapped.
+function tapTempo() {
+  const t = now();
+  if (G.taps.length && t - G.taps[G.taps.length - 1] > 2) G.taps = [];
+  G.taps.push(t); if (G.taps.length > 12) G.taps.shift();
+  if (G.taps.length < 4) { popText(W / 2, 80, 'Tap ' + (4 - G.taps.length) + ' more', '#b9b3dd'); return; }
+  const n = G.taps.length, beat = (G.taps[n - 1] - G.taps[0]) / (n - 1);
+  if (beat < 0.25 || beat > 1.5) return;
+  const bpm = 60 / beat;
+  beatInfo[G.id] = { bpm, offset: G.taps[n - 1] % beat };
+  store.set('beats', beatInfo);
+  // Re-plan notes that aren't on screen yet.
+  const L = LEVELS[diff];
+  const off = beatInfo[G.id].offset, firstFree = t + L.approach;
+  G.notes = G.notes.filter(no => no.done || no.t < firstFree);
+  const step = diff === 'hard' ? beat / 2 : beat;
+  G.nextT = off + Math.ceil((firstFree - off) / step) * step;
+  popText(W / 2, 80, Math.round(bpm) + ' BPM locked!', '#ffd23d');
+}
+
+function judge(note, diffT) {
+  const a = Math.abs(diffT);
+  const kind = a <= WIN.perfect ? 'perfect' : a <= WIN.good ? 'good' : 'ok';
+  note.done = true; note.hitAt = performance.now(); note.kind = kind;
+  G.hits[kind]++; G.combo++; G.maxCombo = Math.max(G.maxCombo, G.combo);
+  G.score += Math.round({ perfect: 300, good: 100, ok: 50 }[kind] * (1 + G.combo / 25));
+  popText(note.x, note.y - 60, { perfect: 'PERFECT', good: 'GOOD', ok: 'OK' }[kind], { perfect: '#ffd23d', good: '#3dffa0', ok: '#3dd6ff' }[kind]);
+  G.flash = 1; clickSound(kind === 'perfect');
+  updateHud();
+}
+function miss(note) {
+  note.done = true; note.missed = true; note.hitAt = performance.now();
+  G.hits.miss++; G.combo = 0;
+  popText(note.x, note.y - 60, 'MISS', '#ff4d4d'); updateHud();
+}
+function popText(x, y, text, color) { G.pops.push({ x, y, text, color, born: performance.now() }); }
+
+function updateHud() {
+  $('score').textContent = G.score.toLocaleString();
+  $('combo').textContent = G.combo > 1 ? G.combo + 'x' : '';
+  const total = G.hits.perfect + G.hits.good + G.hits.ok + G.hits.miss;
+  $('acc').textContent = total ? accuracy().toFixed(1) + '%' : '';
+}
+function accuracy() {
+  const h = G.hits, total = h.perfect + h.good + h.ok + h.miss;
+  return total ? (h.perfect * 300 + h.good * 100 + h.ok * 50) / (total * 300) * 100 : 100;
+}
+
+let clickCtx = null;
+function clickSound(perfect) {
+  try {
+    clickCtx = clickCtx || actx || new AudioContext();
+    const o = clickCtx.createOscillator(), v = clickCtx.createGain();
+    o.frequency.value = perfect ? 1100 : 800; v.gain.value = 0.06;
+    v.gain.exponentialRampToValueAtTime(0.0001, clickCtx.currentTime + 0.06);
+    o.connect(v); v.connect(clickCtx.destination); o.start(); o.stop(clickCtx.currentTime + 0.07);
+  } catch {}
+}
+
+// ---------- input ----------
+cv.addEventListener('mousemove', e => { if (G) G.mouse = { x: e.clientX, y: e.clientY }; });
+cv.addEventListener('mousedown', e => {
+  if (!G || G.paused || G.over) return;
+  const t = now(), r = LEVELS[diff].radius;
+  const hit = G.notes.filter(n => !n.done && !n.key && Math.hypot(n.x - e.clientX, n.y - e.clientY) <= r + 8 && Math.abs(n.t - t) <= WIN.ok)
+                     .sort((a, b) => a.t - b.t)[0];
+  if (hit) judge(hit, hit.t - t);
+});
+addEventListener('keydown', e => {
+  if (!G || !$('game').classList.contains('show')) return;
+  if (e.code === 'Escape') { G.paused ? resume() : pause(); return; }
+  if (G.paused || G.over || e.repeat) return;
+  if (e.code === 'KeyB' || e.code === 'Space') {
+    e.preventDefault();
+    const t = now();
+    const hit = G.notes.filter(n => !n.done && n.key && Math.abs(n.t - t) <= WIN.ok).sort((a, b) => a.t - b.t)[0];
+    if (hit) judge(hit, hit.t - t);
+  }
+  if (e.code === 'KeyT' && G.mode === 'spotify') tapTempo();
+});
+
+function pause() {
+  if (!G || G.over) return;
+  G.paused = true; $('pause').classList.add('show');
+  if (G.mode === 'spotify') sp.pause();
+  else if (src) { filePausedAt = fileTime(); src.onended = null; src.stop(); src = null; }
+}
+function resume() {
+  G.paused = false; $('pause').classList.remove('show');
+  if (G.mode === 'spotify') sp.resume(); else playFileFrom(filePausedAt);
+}
+function stopMusic() {
+  if (G?.mode === 'spotify' && sp) sp.pause();
+  if (src) { src.onended = null; try { src.stop(); } catch {} src = null; }
+}
+function restart() {
+  $('pause').classList.remove('show'); $('results').classList.remove('show');
+  if (G.mode === 'spotify') { const id = G.id; stopMusic(); startSpotify(id); }
+  else { stopMusic(); startFile(G.name); }
+}
+function quit() {
+  stopMusic(); $('pause').classList.remove('show'); $('results').classList.remove('show');
+  G = null; show('library'); drawSongs();
+}
+$('resumeBtn').onclick = resume; $('restartBtn').onclick = restart; $('quitBtn').onclick = quit;
+$('againBtn').onclick = restart; $('backBtn').onclick = quit;
+addEventListener('blur', () => { if (G && !G.paused && !G.over && $('game').classList.contains('show')) pause(); });
+
+function finish() {
+  if (G.over) return; G.over = true; stopMusic();
+  const a = accuracy();
+  const grade = G.hits.miss === 0 && a >= 95 ? 'S' : a >= 90 ? 'A' : a >= 80 ? 'B' : a >= 70 ? 'C' : 'D';
+  let newBest = false;
+  if (G.mode === 'spotify') {
+    const k = G.id + diff;
+    if (G.score > (best[k] || 0)) { best[k] = G.score; store.set('best', best); newBest = true; }
+  }
+  $('resTitle').textContent = newBest ? 'New best score! 🎉' : 'Song done!';
+  $('resGrade').textContent = grade;
+  $('resStats').innerHTML = `Score: <b>${G.score.toLocaleString()}</b><br>Accuracy: <b>${a.toFixed(1)}%</b> · Best combo: <b>${G.maxCombo}x</b><br>` +
+    `<span style="color:#ffd23d">Perfect ${G.hits.perfect}</span> · <span style="color:#3dffa0">Good ${G.hits.good}</span> · <span style="color:#3dd6ff">OK ${G.hits.ok}</span> · <span style="color:#ff4d4d">Miss ${G.hits.miss}</span>`;
+  $('results').classList.add('show');
+}
+
+// ---------- drawing ----------
+function loop() {
+  requestAnimationFrame(loop);
+  if (!G || !$('game').classList.contains('show')) return;
+  const L = LEVELS[diff], t = now(), real = performance.now();
+
+  // Waiting for Spotify to start
+  if (G.mode === 'spotify' && !spClock.started) {
+    $('msg').innerHTML = real - G.waitSince > 3500
+      ? 'Press ▶ on the Spotify player<br>in the bottom right corner'
+      : 'Starting song...';
+  } else {
+    $('msg').innerHTML = (G.mode === 'spotify' && !beatInfo[G.id] && t < 8 && !G.paused)
+      ? 'Tip: tap <span class="key">T</span> to the beat so the notes match this song' : '';
+  }
+
+  const running = !G.paused && !G.over && (G.mode === 'file' || spClock.started);
+  if (running) {
+    spawnNotes(t);
+    for (const n of G.notes) if (!n.done && t - n.t > WIN.ok) miss(n);
+    if (G.mode === 'spotify' && spClock.dur && (t * 1000 >= spClock.dur - 400 || (spClock.paused && spClock.pos >= spClock.dur - 1500))) finish();
+  }
+  G.notes = G.notes.filter(n => !n.done || real - n.hitAt < 400);
+  G.pops = G.pops.filter(p => real - p.born < 700);
+
+  // background
+  G.flash *= 0.9;
+  g.fillStyle = '#0d0b1a'; g.fillRect(0, 0, W, H);
+  if (G.flash > 0.02) { g.fillStyle = `rgba(255,61,139,${G.flash * 0.08})`; g.fillRect(0, 0, W, H); }
+
+  // B pad
+  g.save();
+  g.strokeStyle = '#3a3366'; g.lineWidth = 3;
+  roundRect(W / 2 - 50, H - 160, 100, 100, 18); g.stroke();
+  g.fillStyle = '#3a3366'; g.font = 'bold 40px system-ui'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText('B', W / 2, H - 110);
+  g.restore();
+
+  // notes, latest first so the soonest one is on top
+  const list = [...G.notes].sort((a, b) => b.t - a.t);
+  for (const n of list) {
+    const r = L.radius;
+    if (n.done) { // burst
+      const k = (real - n.hitAt) / 400;
+      g.globalAlpha = 1 - k;
+      g.strokeStyle = n.missed ? '#ff4d4d' : '#fff'; g.lineWidth = 4;
+      if (n.key) { roundRect(n.x - 50 - k * 30, n.y - 50 - k * 30, 100 + k * 60, 100 + k * 60, 18); g.stroke(); }
+      else { g.beginPath(); g.arc(n.x, n.y, r * (1 + k * 0.6), 0, 7); g.stroke(); }
+      g.globalAlpha = 1; continue;
+    }
+    const left = n.t - t; // seconds until the beat
+    const k = Math.max(0, Math.min(1, 1 - left / L.approach)); // 0 = just showed up, 1 = hit now
+    g.globalAlpha = Math.min(1, k * 4);
+    if (n.key) {
+      g.fillStyle = '#ffd23d'; roundRect(n.x - 46, n.y - 46, 92, 92, 16); g.fill();
+      g.fillStyle = '#1a1200'; g.font = 'bold 50px system-ui'; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText('B', n.x, n.y + 2);
+      const s = 46 + (1 - k) * 90; g.strokeStyle = '#ffd23d'; g.lineWidth = 4;
+      roundRect(n.x - s, n.y - s, s * 2, s * 2, 16 + (1 - k) * 20); g.stroke();
+    } else {
+      g.fillStyle = '#3dd6ff'; g.beginPath(); g.arc(n.x, n.y, r, 0, 7); g.fill();
+      g.fillStyle = '#0d0b1a'; g.beginPath(); g.arc(n.x, n.y, r * 0.72, 0, 7); g.fill();
+      g.fillStyle = '#3dd6ff'; g.beginPath(); g.arc(n.x, n.y, r * 0.3, 0, 7); g.fill();
+      g.strokeStyle = '#fff'; g.lineWidth = 3;
+      g.beginPath(); g.arc(n.x, n.y, r + (1 - k) * r * 2.2, 0, 7); g.stroke();
+    }
+    g.globalAlpha = 1;
+  }
+
+  // popup words
+  for (const p of G.pops) {
+    const k = (real - p.born) / 700;
+    g.globalAlpha = 1 - k; g.fillStyle = p.color; g.font = 'bold 26px system-ui'; g.textAlign = 'center';
+    g.fillText(p.text, p.x, p.y - k * 30); g.globalAlpha = 1;
+  }
+
+  // song progress bar
+  const dur = G.mode === 'spotify' ? spClock.dur / 1000 : audioBuf?.duration;
+  if (dur) { g.fillStyle = '#2b2550'; g.fillRect(0, 0, W, 5); g.fillStyle = '#ff3d8b'; g.fillRect(0, 0, W * Math.min(1, t / dur), 5); }
+}
+function roundRect(x, y, w, h, r) { g.beginPath(); g.roundRect(x, y, w, h, r); }
+
+showDiff(); showSync(); drawSongs(); fetchNames();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
