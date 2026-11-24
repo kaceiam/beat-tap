@@ -62,7 +62,7 @@
 <div id="library" class="screen show">
   <div class="wrap">
     <h1>Beat <span>Tap</span></h1>
-    <p class="sub">Click the <b style="color:#3dd6ff">circles</b> with your mouse. Press <span class="key">B</span> for the <b style="color:#ffd23d">B</b> notes. Hit them right on the beat!</p>
+    <p class="sub">The <b style="color:#3dd6ff">circles</b> fly at you. Click each one with your mouse right on the beat!</p>
 
     <div class="row">
       <input id="search" placeholder="🔍 Search your songs..." autocomplete="off">
@@ -347,7 +347,7 @@ function rnd(seed) { let h = 2166136261; for (const c of seed) { h ^= c.charCode
 
 function makeNote(t, seed) {
   const L = LEVELS[diff];
-  const isKey = rnd(seed + 'k') < 0.33;
+  const isKey = false; // only circles now
   let x, y;
   if (isKey) { x = W / 2; y = H - 110; }
   else {
@@ -461,12 +461,6 @@ addEventListener('keydown', e => {
   if (e.code === 'Escape') { G.paused ? resume() : pause(); return; }
   if (G.paused || G.over || e.repeat) return;
   if (e.code === 'Space') e.preventDefault();
-  if (e.code === 'KeyB') {
-    e.preventDefault();
-    const t = now();
-    const hit = G.notes.filter(n => !n.done && n.key && Math.abs(n.t - t) <= WIN.ok).sort((a, b) => a.t - b.t)[0];
-    if (hit) judge(hit, hit.t - t);
-  }
   if (e.code === 'KeyT' && G.mode === 'spotify') tapTempo();
 });
 
@@ -560,14 +554,6 @@ function loop() {
     g.beginPath(); g.arc(cx, cy, (Math.max(W, H) * 0.5) / z, 0, 7); g.stroke();
   }
   g.globalAlpha = 1;
-
-  // B pad
-  g.save();
-  g.strokeStyle = '#3a3366'; g.lineWidth = 3;
-  roundRect(W / 2 - 50, H - 160, 100, 100, 18); g.stroke();
-  g.fillStyle = '#3a3366'; g.font = 'bold 40px system-ui'; g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.fillText('B', W / 2, H - 110);
-  g.restore();
 
   // notes, latest first so the soonest one is on top
   const list = [...G.notes].sort((a, b) => b.t - a.t);
