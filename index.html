@@ -42,6 +42,10 @@
   #hud { position: absolute; top: 12px; left: 16px; right: 16px; display: flex; justify-content: space-between; pointer-events: none; font-weight: 700; }
   #hud .big { font-size: 30px; }
   #msg { position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); text-align: center; font-size: 24px; pointer-events: none; text-shadow: 0 2px 8px #000; }
+  #lyrics { position: absolute; left: 0; right: 0; bottom: 34px; text-align: center; pointer-events: none; text-shadow: 0 2px 8px #000; padding: 0 16px; }
+  #lyrics .cur { font-size: 30px; font-weight: 800; color: #fff; }
+  #lyrics .nxt { font-size: 18px; color: #8f88bb; margin-top: 4px; }
+  #lyrBtn { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); font-size: 14px; padding: 6px 12px; background: #2b2550cc; z-index: 2; }
   #help { position: absolute; bottom: 12px; left: 16px; color: #b9b3dd; font-size: 14px; pointer-events: none; }
 
   #maker canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; }
@@ -133,6 +137,8 @@
     <div style="text-align:right"><div class="big" id="combo"></div><div id="acc"></div></div>
   </div>
   <div id="msg"></div>
+  <div id="lyrics"></div>
+  <button id="lyrBtn" style="display:none"></button>
   <div id="help"><span class="key">Esc</span> stop</div>
 </div>
 
@@ -446,6 +452,16 @@ function newGame(mode, id) {
         heardAt: 0, quietSince: 0, fileIdx: 0 };
   $('songName').textContent = name;
   updateHud();
+  // Get the song's words.
+  G.lyr = null; G.lyrChoices = null; $('lyrBtn').style.display = 'none'; $('lyrics').innerHTML = ''; $('lyrics').dataset.i = '-';
+  G.lyrKey = mode === 'file' ? 'file:' + G_fileName : id;
+  if ((mode === 'listen' && id && info[id]?.t) || (mode === 'file' && !G_level && G_fileName)) {
+    const game = G;
+    loadLyrics(G.lyrKey, mode === 'file' ? G_fileName : info[id].t, mode === 'file').then(c => {
+      if (G !== game || !c.length) return;
+      G.lyrChoices = c; G.lyrPick = (lyrPick[G.lyrKey] || 0) % c.length; setLyr();
+    }).catch(() => {});
+  }
   if (mode === 'listen') {
     beat.period = 0; beat.sure = 0; beat.changes = 0; env.fill(0); envLast = -1; loudAvg = 0; loudSong = 0;
   } else {
@@ -471,8 +487,79 @@ function now() {
   return t - syncMs / 1000;
 }
 
+// ---------- song words (lyrics) ----------
+// Words with their times come from lrclib.net (free). Spotify won't tell us the singer,
+// so we pick the version most people uploaded. "Wrong words?" tries the next one.
+const lyrCache = {};
+let lyrPick = store.get('lyrPick', {});
+async function loadLyrics(key, title, isFile) {
+  if (lyrCache[key]) return lyrCache[key];
+  const clean = title.replace(/\s*[\(\[].*?[\)\]]/g, '').replace(/\s+-\s+(feat|with|remaster).*$/i, '').trim();
+  const url = 'https://lrclib.net/api/search?' + (isFile ? 'q=' : 'track_name=') + encodeURIComponent(clean);
+  const list = (await (await fetch(url)).json()).filter(x => x.syncedLyrics && !x.instrumental);
+  const count = {};
+  for (const x of list) { const a = x.artistName.toLowerCase(); count[a] = (count[a] || 0) + 1; }
+  list.sort((a, b) => count[b.artistName.toLowerCase()] - count[a.artistName.toLowerCase()]);
+  const seen = new Set(), picks = [];
+  for (const x of list) { const a = x.artistName.toLowerCase(); if (!seen.has(a)) { seen.add(a); picks.push(x); } }
+  return lyrCache[key] = picks.slice(0, 8).map(x => ({ artist: x.artistName, lines: parseLrc(x.syncedLyrics) })).filter(c => c.lines.length);
+}
+function parseLrc(s) {
+  const out = [];
+  for (const line of s.split('\n')) {
+    const m = line.match(/^\[(\d+):(\d+(?:\.\d+)?)\]\s*(.*)$/);
+    if (m && m[3].trim()) out.push({ t: +m[1] * 60 + +m[2], text: m[3].trim() });
+  }
+  return out;
+}
+function lyrBase() { return G.mode === 'listen' ? G.heardAt : 0; }   // when the song started
+function setLyr() {
+  G.lyr = G.lyrChoices[G.lyrPick];
+  const t = G.heardAt || G.mode === 'file' ? now() + approachNow() : -1e9, base = lyrBase();
+  G.lyrIdx = 0;
+  while (G.lyrIdx < G.lyr.lines.length && base + G.lyr.lines[G.lyrIdx].t < t) G.lyrIdx++;
+  $('lyrBtn').textContent = '🎤 ' + G.lyr.artist + (G.lyrChoices.length > 1 ? ' · wrong words?' : '');
+  $('lyrBtn').style.display = '';
+}
+$('lyrBtn').onclick = () => {
+  if (!G || !G.lyrChoices) return;
+  G.lyrPick = (G.lyrPick + 1) % G.lyrChoices.length;
+  lyrPick[G.lyrKey] = G.lyrPick; store.set('lyrPick', lyrPick);
+  G.notes = G.notes.filter(n => !n.word || n.done);
+  setLyr();
+};
+// A circle for each line the singer starts, with the first word on it.
+function spawnWords(t) {
+  if (!G.lyr || (G.mode === 'listen' && (!G.heardAt || G.quietSince))) return;
+  const base = lyrBase(), ap = approachNow(), lines = G.lyr.lines;
+  while (G.lyrIdx < lines.length) {
+    const ln = lines[G.lyrIdx], nt = base + ln.t;
+    if (nt > t + ap) break;
+    G.lyrIdx++;
+    if (nt < t + 0.3) continue;   // too late for this one
+    const word = (ln.text.split(/\s+/)[0] || '').replace(/[^\p{L}\p{N}']/gu, '').slice(0, 10);
+    const n = makeNote(nt); if (n) n.word = word || '♪';
+  }
+}
+function showLyrics(t) {
+  if (!G.lyr || (G.mode === 'listen' && !G.heardAt)) { if ($('lyrics').dataset.i !== '-') { $('lyrics').innerHTML = ''; $('lyrics').dataset.i = '-'; } return; }
+  const base = lyrBase(), lines = G.lyr.lines;
+  let i = -1;
+  while (i + 1 < lines.length && base + lines[i + 1].t <= t) i++;
+  if ($('lyrics').dataset.i === String(i)) return;
+  $('lyrics').dataset.i = String(i);
+  const cur = lines[i]?.text || '', nxt = lines[i + 1]?.text || '';
+  $('lyrics').innerHTML = '';
+  const a = document.createElement('div'); a.className = 'cur'; a.textContent = cur;
+  const b = document.createElement('div'); b.className = 'nxt'; b.textContent = nxt;
+  $('lyrics').append(a, b);
+}
+
 function makeNote(t, dur = 0) {
   const L = LEVELS[diff];
+  // Don't put two circles on the same moment: reuse the one that's already there.
+  const dup = !dur && G.notes.find(n => !n.done && !n.slide && Math.abs(n.t - t) < 0.12);
+  if (dup) return dup;
   const a = Math.random() * Math.PI * 2, d = 140 + Math.random() * 200;
   const { cx, cy, hx, hy } = midBox();
   const step = Math.min(hx, hy) * (0.6 + Math.random() * 0.7);
@@ -494,6 +581,7 @@ function makeNote(t, dur = 0) {
     G.lastPos = pts[pts.length - 1];
   }
   G.notes.push(n);
+  return n;
 }
 // Keep circles in the middle part of the screen (where the mouse can reach easily), not out at the sides.
 function midBox() {
@@ -712,7 +800,7 @@ function loop() {
     const loud = listenFrame(at);
     if (loud > 6) {
       // Music came back after a short quiet gap = probably the next song. Listen fresh for its speed.
-      if (G.quietSince && at - G.quietSince > 1) { resetBeat(); loudSong = 0; G.heardAt = at; }
+      if (G.quietSince && at - G.quietSince > 1) { resetBeat(); loudSong = 0; G.heardAt = at; G.lyr = null; $('lyrBtn').style.display = 'none'; }
       if (!G.heardAt) G.heardAt = at; G.quietSince = 0;
       loudAvg += (loud - loudAvg) * 0.03;                     // last ~half second
       loudSong += (loud - loudSong) * (loudSong ? 0.002 : 1); // whole song so far
@@ -723,7 +811,7 @@ function loop() {
     else if (!beat.period || beat.sure < 1.2 || at - G.heardAt < 3) $('msg').innerHTML = 'Finding the beat... 🎵';
     else $('msg').innerHTML = '';
     if (G.quietSince && at - G.quietSince > 3) {
-      if (at - G.heardAt > 15) finish(); else { G.heardAt = 0; G.quietSince = 0; }
+      if (at - G.heardAt > 15) finish(); else { G.heardAt = 0; G.quietSince = 0; G.lyrIdx = 0; }
     }
     if (!stream) $('msg').innerHTML = 'The game stopped hearing your music. Press Esc and try again.';
   } else $('msg').innerHTML = '';
@@ -731,7 +819,9 @@ function loop() {
   const t = now();
   if (!G.over) {
     if (G.mode === 'file' || (G.heardAt && actx.currentTime - G.heardAt > 3 && !G.quietSince)) spawnNotes(t);
+    spawnWords(t);
     touchNotes(t);
+    showLyrics(t);
     for (const n of G.notes) if (!n.done && !n.started && t - n.t > WIN.ok) miss(n);
   }
   G.notes = G.notes.filter(n => !n.done || real - n.hitAt < 400);
@@ -766,7 +856,7 @@ function loop() {
       g.globalAlpha = 1; continue;
     }
     const p = proj(n, t), far = Math.max(0, Math.min(1, (n.t - t) / (n.ap || L.approach))), rr = r * p.s;
-    const col = n.slide ? '#ffd23d' : '#3dd6ff';
+    const col = n.slide ? '#ffd23d' : n.word ? '#ff3d8b' : '#3dd6ff';   // pink = a word from the song
     if (n.slide) {
       // the trail of 40 gold dots shows up as the circle gets close
       const show = n.started ? 1 : Math.max(0, Math.min(1, (0.75 - far) * 2.5));
@@ -791,7 +881,11 @@ function loop() {
     g.globalAlpha = Math.min(1, (1 - far) * 5);
     g.fillStyle = col; g.beginPath(); g.arc(p.x, p.y, rr, 0, 7); g.fill();
     g.fillStyle = '#0d0b1a'; g.beginPath(); g.arc(p.x, p.y, rr * 0.72, 0, 7); g.fill();
-    g.fillStyle = col; g.beginPath(); g.arc(p.x, p.y, rr * 0.3, 0, 7); g.fill();
+    if (n.word) {
+      g.fillStyle = '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.font = `bold ${Math.max(6, Math.round(rr * 0.42 * Math.min(1, 6 / Math.max(1, n.word.length))))}px system-ui`;
+      g.fillText(n.word, p.x, p.y);
+    } else { g.fillStyle = col; g.beginPath(); g.arc(p.x, p.y, rr * 0.3, 0, 7); g.fill(); }
     g.strokeStyle = '#fff'; g.lineWidth = 3 * p.s; g.beginPath(); g.arc(p.x, p.y, rr, 0, 7); g.stroke();
     g.globalAlpha = 1;
   }
