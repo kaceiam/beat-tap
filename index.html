@@ -609,7 +609,7 @@ const mouse = { x: -999, y: -999 };
 cv.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
 function touchNotes(t) {
   const r = LEVELS[diff].radius;
-  const reach = r * 2 + 50;
+  const reach = r;   // exactly the circle
   for (const n of G.notes) {
     if (n.done) continue;
     if (n.started) {
@@ -636,9 +636,9 @@ function touchNotes(t) {
     }
     if (n.t - t > 0.12 || t - n.t > WIN.ok) continue;   // right around the beat (a little early or late is fine)
     const p = proj(n, t);
-    // Just get near it, no need to hit the middle. Getting there a bit early is fine:
+    // Your mouse has to be inside the circle (anywhere in it). Getting there a bit early is fine:
     // it counts as right on time when the beat comes.
-    if (Math.hypot(p.x - mouse.x, p.y - mouse.y) <= r * p.s * 2 + 50) n.touched = true;
+    if (Math.hypot(p.x - mouse.x, p.y - mouse.y) <= r * p.s) n.touched = true;   // only inside the circle
     if (!n.touched || n.t - t > 0.02) continue;
     const d = t < n.t ? 0 : n.t - t;
     if (n.slide) { judge(n, d); n.done = false; n.started = true; n.lastOn = t; n.lastTick = t; }
