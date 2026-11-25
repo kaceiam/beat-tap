@@ -139,7 +139,7 @@
   <div id="msg"></div>
   <div id="lyrics"></div>
   <button id="lyrBtn" style="display:none"></button>
-  <div id="help"><span class="key">Esc</span> stop</div>
+  <div id="help"><span class="key">Esc</span> stop · Circles early or late? Press <span class="key">←</span> or <span class="key">→</span></div>
 </div>
 
 <!-- ============ LEVEL MAKER ============ -->
@@ -311,10 +311,7 @@ $('shareGo').onclick = async () => {
     s.getVideoTracks().forEach(t => t.stop()); // we only need the sound
     if (!s.getAudioTracks().length) { $('shareErr').textContent = "No sound came through. Pick Entire screen and turn on 'Also share system audio'."; return; }
     stream = s;
-    const srcNode = actx.createMediaStreamSource(stream);
-    analyser = actx.createAnalyser(); analyser.fftSize = 1024; analyser.smoothingTimeConstant = 0;
-    srcNode.connect(analyser); // not connected to the speakers, so you don't hear it twice
-    freq = new Uint8Array(analyser.frequencyBinCount); prevFreq = new Uint8Array(analyser.frequencyBinCount);
+    await startEars(actx.createMediaStreamSource(stream));
     stream.getAudioTracks()[0].onended = () => { stream = null; };
     $('shareHelp').classList.remove('show');
     newGame('listen', pendingSong);
@@ -323,64 +320,137 @@ $('shareGo').onclick = async () => {
   }
 };
 
-// Beat finder: keeps 10 seconds of "how much the music just punched" in 10 ms slots.
-const SLOT = 0.01, KEEP = 1000;
-const env = new Float32Array(KEEP);
-let envLast = -1;
+// ---------- the game's ears ----------
+// Runs on the sound itself, every 512 samples (about 1/90 of a second), nonstop,
+// even when Spotify is covering this window. It measures the bass (kick drums)
+// and the sharp sounds (snares, claps, hi-hats).
+class OnsetCore {
+  constructor(sr) { this.sr = sr; this.a = 1 - Math.exp(-2 * Math.PI * 150 / sr); this.lp = 0; this.prev = 0; this.eL = 0; this.eH = 0; this.eA = 0; this.n = 0; }
+  push(s, frame) {
+    this.lp += this.a * (s - this.lp);
+    const hp = s - this.prev; this.prev = s;
+    this.eL += this.lp * this.lp; this.eH += hp * hp; this.eA += s * s;
+    if (++this.n < 512) return null;
+    const r = { t: (frame + 1) / this.sr, l: this.eL / 512, h: this.eH / 512, a: this.eA / 512 };
+    this.n = 0; this.eL = this.eH = this.eA = 0;
+    return r;
+  }
+}
+const EARS_SRC = OnsetCore.toString() + `
+class BeatTapEars extends AudioWorkletProcessor {
+  constructor() { super(); this.c = new OnsetCore(sampleRate); this.out = []; }
+  process(inputs) {
+    const inp = inputs[0];
+    if (inp && inp[0]) {
+      const a = inp[0], b = inp[1] || inp[0];
+      for (let i = 0; i < a.length; i++) { const r = this.c.push((a[i] + b[i]) * 0.5, currentFrame + i); if (r) this.out.push(r); }
+      if (this.out.length >= 4) { this.port.postMessage(this.out); this.out = []; }
+    }
+    return true;
+  }
+}
+registerProcessor('beattap-ears', BeatTapEars);`;
+let earsNode = null;
+async function startEars(srcNode) {
+  if (!earsNode) {
+    try {
+      await actx.audioWorklet.addModule(URL.createObjectURL(new Blob([EARS_SRC], { type: 'application/javascript' })));
+      earsNode = new AudioWorkletNode(actx, 'beattap-ears', { numberOfOutputs: 1 });
+      earsNode.port.onmessage = e => e.data.forEach(onHop);
+    } catch {
+      // Backup ears for browsers that can't do the one above.
+      const core = new OnsetCore(actx.sampleRate);
+      let frame = -1;
+      earsNode = actx.createScriptProcessor(1024, 2, 1);
+      earsNode.onaudioprocess = e => {
+        const a = e.inputBuffer.getChannelData(0), b = e.inputBuffer.numberOfChannels > 1 ? e.inputBuffer.getChannelData(1) : a;
+        if (frame < 0) frame = Math.round(actx.currentTime * actx.sampleRate) - a.length;
+        for (let i = 0; i < a.length; i++) { const r = core.push((a[i] + b[i]) * 0.5, frame + i); if (r) onHop(r); }
+        frame += a.length;
+      };
+    }
+    earsNode.connect(actx.destination);   // makes silence; needed so it keeps running
+  }
+  srcNode.connect(earsNode);              // not connected to the speakers, so you don't hear it twice
+  analyser = true;
+}
+
+// Beat finder: remembers the last 12 seconds of "how hard did the music just hit".
+const KEEP = 1100;
+const hopT = new Float64Array(KEEP), hopO = new Float32Array(KEEP);
+let hopN = 0, prevL = 0, prevH = 0, curLoud = 0;
 const beat = { period: 0, last: 0, sure: 0, lastCalc: 0, changes: 0 };
-
-function listenFrame(t) {
-  analyser.getByteFrequencyData(freq);
-  let flux = 0, loud = 0;
-  for (let i = 1; i < 120; i++) {
-    const d = freq[i] - prevFreq[i];
-    if (d > 0) flux += d * (i < 12 ? 2.5 : 1); // bass and drums count extra
-    loud += freq[i];
-  }
-  prevFreq.set(freq);
-  const slot = Math.floor(t / SLOT);
-  if (envLast < 0) envLast = slot - 1;
-  for (let s = envLast + 1; s <= slot; s++) env[s % KEEP] = 0;
-  env[slot % KEEP] = Math.max(env[slot % KEEP], flux);
-  envLast = slot;
-  return loud / 119;
+function onHop(r) {
+  const L = Math.log1p(r.l * 2000), Hh = Math.log1p(r.h * 4000);
+  const o = Math.max(0, L - prevL) * 2.5 + Math.max(0, Hh - prevH) * 0.6;   // bass hits (kick drums) count extra
+  prevL = L; prevH = Hh;
+  hopT[hopN % KEEP] = r.t; hopO[hopN % KEEP] = o; hopN++;
+  curLoud = Math.sqrt(r.a) * 1000;
 }
+function listenFrame() { return curLoud; }
 
-function findBeat(t) {
-  const n = 800, end = envLast; // last 8 seconds
+// Works out the song's speed and where its beats land, then the game can send circles
+// so they reach you right on the next beats.
+function findBeat() {
+  const n = Math.min(hopN, 870);   // last 10 seconds
+  if (n < 260) return;
+  const dt = (hopT[(hopN - 1) % KEEP] - hopT[(hopN - n) % KEEP]) / (n - 1);   // time between hops
   const x = new Float32Array(n);
-  let mean = 0;
-  for (let i = 0; i < n; i++) { x[i] = env[(end - n + 1 + i + KEEP * 10) % KEEP]; mean += x[i]; }
-  mean /= n;
-  for (let i = 0; i < n; i++) x[i] = Math.max(0, x[i] - mean);
-  // Try every beat length from 0.3s (200 BPM) to 1s (60 BPM).
-  let bestLag = 0, bestScore = 0, total = 0, count = 0;
-  for (let lag = 30; lag <= 100; lag++) {
-    let s = 0;
-    for (let i = lag; i < n; i++) s += x[i] * x[i - lag];
-    s /= (n - lag);
-    const bpm = 6000 / lag;
-    s *= Math.exp(-0.5 * Math.pow(Math.log2(bpm / 120) / 0.6, 2)); // songs are usually near 120 BPM
-    total += s; count++;
-    if (s > bestScore) { bestScore = s; bestLag = lag; }
+  for (let i = 0; i < n; i++) x[i] = hopO[(hopN - n + i) % KEEP];
+  // take away the background level so only the hits stand out
+  const w = Math.round(0.25 / dt), y = new Float32Array(n);
+  let run = 0;
+  for (let i = 0; i < n; i++) {
+    run += x[i]; if (i - 2 * w - 1 >= 0) run -= x[i - 2 * w - 1];
+    const lo = Math.max(0, i - 2 * w), cnt = i - lo + 1;
+    y[i] = Math.max(0, x[i] - run / cnt);
   }
-  if (!bestLag) return;
-  beat.sure = bestScore / (total / count + 1e-9);
-  // Find where the beats land.
+  // how well the song matches itself shifted by each amount
+  const minLag = Math.floor(0.25 / dt), maxLag = Math.ceil(3.4 / dt);
+  const ac = new Float32Array(maxLag + 2);
+  for (let lag = minLag; lag <= maxLag + 1 && lag < n; lag++) {
+    let s = 0; for (let i = lag; i < n; i++) s += y[i] * y[i - lag];
+    ac[lag] = s / (n - lag);
+  }
+  const A = l => { const i = Math.floor(l), f = l - i; return i + 1 <= maxLag + 1 ? ac[i] * (1 - f) + ac[i + 1] * f : 0; };
+  // Score each beat length (60 to 180 BPM): it should match at 1, 2 and 4 beats, and songs are usually near 115 BPM.
+  let best = 0, bestS = 0, sum = 0, cnt = 0;
+  for (let lag = Math.ceil(60 / 180 / dt); lag <= Math.floor(60 / 60 / dt); lag++) {
+    let s = A(lag) + 0.6 * A(2 * lag) + 0.35 * A(lag / 2) + (4 * lag <= maxLag ? 0.5 * A(4 * lag) : 0);
+    const bpm = 60 / (lag * dt);
+    s *= Math.exp(-0.5 * Math.pow(Math.log2(bpm / 115) / 0.75, 2));
+    sum += s; cnt++;
+    if (s > bestS) { bestS = s; best = lag; }
+  }
+  if (!best) return;
+  // fine-tune the beat length between two hops
+  const sc = l => A(l) + 0.6 * A(2 * l);
+  const s0 = sc(best - 1), s1 = sc(best), s2 = sc(best + 1), den = s0 - 2 * s1 + s2;
+  const lagF = best + (den < 0 ? Math.max(-0.5, Math.min(0.5, 0.5 * (s0 - s2) / den)) : 0);
+  beat.sure = bestS / (sum / cnt + 1e-9);
+  const period = lagF * dt;
+  // Where do the beats land? Try every starting point; recent beats count more.
   let bestOff = 0, bestSum = -1;
-  for (let o = 0; o < bestLag; o++) {
-    let sum = 0;
-    for (let k = 0; n - 1 - o - k * bestLag >= 0; k++) { const i = n - 1 - o - k * bestLag; sum += x[i] + 0.5 * (x[i - 1] || 0) + 0.5 * (x[i + 1] || 0); }
-    if (sum > bestSum) { bestSum = sum; bestOff = o; }
+  for (let o = 0; o < lagF; o++) {
+    let s = 0;
+    for (let k = 0; ; k++) {
+      const i = Math.round(n - 1 - o - k * lagF); if (i < 1) break;
+      s += Math.pow(0.93, k) * Math.max(y[i], 0.6 * y[i - 1], 0.6 * (y[i + 1] || 0));
+    }
+    if (s > bestSum) { bestSum = s; bestOff = o; }
   }
-  const period = bestLag * SLOT;
-  if (beat.period && Math.abs(period - beat.period) / beat.period < 0.05) { beat.period = beat.period * 0.7 + period * 0.3; beat.changes = 0; }
-  else if (!beat.period || ++beat.changes >= 2) { beat.period = period; beat.changes = 0; tempoChanged(); }   // a new speed twice in a row = the song changed speed
-  beat.last = (end - bestOff) * SLOT;
+  const last = hopT[(hopN - 1 - bestOff) % KEEP];
+  if (beat.period && Math.abs(period - beat.period) / beat.period < 0.04) {
+    beat.period = beat.period * 0.75 + period * 0.25; beat.changes = 0;
+    // nudge the beat gently instead of jumping
+    const k = Math.round((last - beat.last) / beat.period), want = beat.last + k * beat.period;
+    let d = last - want; if (Math.abs(d) > beat.period / 2) d = 0;
+    beat.last = want + d * 0.5;
+  } else if (!beat.period || ++beat.changes >= 3) {   // a new speed 3 times in a row = the song changed speed
+    beat.period = period; beat.last = last; beat.changes = 0; tempoChanged();
+  }
 }
-
-// A new song (or a new speed): forget the old beat and throw away circles that were planned for it.
-function resetBeat() { beat.period = 0; beat.sure = 0; beat.changes = 0; env.fill(0); envLast = -1; tempoChanged(); }
+function resetBeat() { beat.period = 0; beat.sure = 0; beat.changes = 0; hopN = 0; tempoChanged(); }
 function tempoChanged() {
   if (!G || G.mode !== 'listen') return;
   const t = now();
@@ -463,7 +533,7 @@ function newGame(mode, id) {
     }).catch(() => {});
   }
   if (mode === 'listen') {
-    beat.period = 0; beat.sure = 0; beat.changes = 0; env.fill(0); envLast = -1; loudAvg = 0; loudSong = 0;
+    beat.period = 0; beat.sure = 0; beat.changes = 0; hopN = 0; loudAvg = 0; loudSong = 0;
   } else {
     if (fileSrc) { fileSrc.onended = null; try { fileSrc.stop(); } catch {} }
     G.level = G_level;
@@ -623,12 +693,14 @@ function slidePos(n, k) { return slideAt(n.pts, k); }   // where the gold ball i
 
 // Did the song have a hit (drum, note) at this moment? Used by Insane to copy the song's extra beats.
 function heardHit(time) {
-  const s = Math.round((time + syncMs / 1000) / SLOT);
-  if (s > envLast || s < envLast - KEEP + 10) return false;
+  time += syncMs / 1000;
+  const n = Math.min(hopN, KEEP - 10); if (n < 50) return false;
+  const tEnd = hopT[(hopN - 1) % KEEP], dt = (tEnd - hopT[(hopN - n) % KEEP]) / (n - 1);
+  const back = Math.round((tEnd - time) / dt); if (back < 2 || back > n - 3) return false;
   let v = 0, mean = 0;
-  for (let d = -2; d <= 2; d++) v = Math.max(v, env[(s + d + KEEP * 10) % KEEP]);
-  for (let i = 0; i < 400; i++) mean += env[(envLast - i + KEEP * 10) % KEEP];
-  return v > (mean / 400) * 2.5;
+  for (let d = -2; d <= 2; d++) v = Math.max(v, hopO[(hopN - 1 - back + d) % KEEP]);
+  const m = Math.min(n, 400); for (let i = 0; i < m; i++) mean += hopO[(hopN - 1 - i) % KEEP];
+  return v > (mean / m) * 2.5;
 }
 
 function spawnNotes(t) {
@@ -640,25 +712,20 @@ function spawnNotes(t) {
     }
     return;
   }
-  if (!beat.period || beat.sure < 1.2) return;
+  if (!beat.period || beat.sure < 3) return;
   const p = beat.period, ap = approachNow();
   // How hyped the music is right now: quiet parts get fewer circles, loud parts get extra ones.
-  const energy = loudSong ? loudAvg / loudSong : 1;
   // Next beats after the ones already sent, lined up with the beat finder.
   let next = beat.last + Math.ceil((Math.max(G.nextBeat, t + 0.3) - beat.last) / p) * p;
   if (G.nextBeat && next - G.nextBeat < p * 0.6) next += p;
   while (next <= t + ap) {
     G.beatCount++;
     const k = G.beatCount;
-    let use = true;   // a circle on every beat
-    if (energy < 0.6 && k % 2 && diff !== 'insane') use = false;   // calm part: half as many
-    if (use) makeNote(next);
-    if (diff === 'insane') {
+    // A circle on every beat (Easy: every other beat). Nothing random: only where the song's beat is.
+    if (diff !== 'easy' || k % 2 === 0) makeNote(next);
+    if (diff === 'hard' || diff === 'insane') {
       // Copy the song: if it had a hit halfway between beats one or two bars ago, it gets a circle there too.
       if (p > 0.32 && (heardHit(next + p / 2 - 4 * p) || heardHit(next + p / 2 - 8 * p))) makeNote(next + p / 2);
-    } else {
-      const extra = diff === "hard" ? 0.6 : diff === "normal" ? 0.35 : 0.15;
-      if (energy > 0.9 && p > 0.35 && Math.random() < extra) makeNote(next + p / 2);   // big part: some in-between beats
     }
     G.nextBeat = next; next += p;
   }
@@ -736,6 +803,10 @@ function touchNotes(t) {
 addEventListener('keydown', e => {
   if (e.code === 'Space' && $('game').classList.contains('show')) e.preventDefault();
   if (e.code === 'Escape' && G && !G.over && $('game').classList.contains('show')) { G.byHand = true; finish(); }
+  if ((e.code === "ArrowLeft" || e.code === "ArrowRight") && G && $("game").classList.contains("show")) {
+    syncMs += e.code === "ArrowRight" ? 10 : -10; store.set("sync2", syncMs); showSync();
+    popText(W / 2, 110, "Timing: " + (syncMs > 0 ? "+" : "") + syncMs + " ms", "#b9b3dd");
+  }
   if ($('maker').classList.contains('show') && MK && !MK.over) {
     if (e.code === 'Escape') endMaker();
     if (e.code === 'KeyZ') mkUndo();
@@ -806,9 +877,9 @@ function loop() {
       loudSong += (loud - loudSong) * (loudSong ? 0.002 : 1); // whole song so far
     }
     else if (G.heardAt && !G.quietSince) G.quietSince = at;
-    if (at - beat.lastCalc > 0.4 && G.heardAt) { beat.lastCalc = at; findBeat(at); }
+    if (at - beat.lastCalc > 0.25 && G.heardAt) { beat.lastCalc = at; findBeat(); }
     if (!G.heardAt) $('msg').innerHTML = G.id ? 'Press ▶ play in your Spotify app' : 'Play a song in your Spotify app';
-    else if (!beat.period || beat.sure < 1.2 || at - G.heardAt < 3) $('msg').innerHTML = 'Finding the beat... 🎵';
+    else if (!beat.period || beat.sure < 3 || at - G.heardAt < 3) $('msg').innerHTML = 'Finding the beat... 🎵';
     else $('msg').innerHTML = '';
     if (G.quietSince && at - G.quietSince > 3) {
       if (at - G.heardAt > 15) finish(); else { G.heardAt = 0; G.quietSince = 0; G.lyrIdx = 0; }
