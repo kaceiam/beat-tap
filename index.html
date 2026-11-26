@@ -57,6 +57,9 @@
   #mkTop .big { font-size: 26px; }
   #mkTop .row { margin: 0; }
   #mkHelp { position: absolute; bottom: 48px; left: 0; right: 0; text-align: center; color: #b9b3dd; font-size: 16px; pointer-events: none; }
+  #levels { grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); }
+  #levels .song .b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lbl { display: block; text-align: left; font-size: 13px; color: #b9b3dd; margin: 8px 0 3px; }
   .song .x { margin-left: auto; display: flex; gap: 4px; }
   .song .x button { padding: 6px 9px; }
 
@@ -195,10 +198,11 @@
   <div class="card">
     <h2>Save your level 💾</h2>
     <p class="hint" id="mkCount"></p>
+    <label class="lbl" for="mkName">Level name</label>
     <input id="mkName" maxlength="60" style="width:100%;font-size:18px" placeholder="Level name">
-    <div class="row" style="margin:10px 0 0">
-      <input id="mkSong" maxlength="80" style="flex:1;min-width:0" placeholder="Song name (and singer)">
-      <input id="mkBy" maxlength="40" style="flex:1;min-width:0" placeholder="Made by (your name)">
+    <div class="row" style="margin:0">
+      <div style="flex:1;min-width:0"><label class="lbl" for="mkSong">Song</label><input id="mkSong" maxlength="80" style="width:100%" placeholder="Song name (and singer)"></div>
+      <div style="flex:1;min-width:0"><label class="lbl" for="mkBy">Made by</label><input id="mkBy" maxlength="40" style="width:100%" placeholder="Your name"></div>
     </div>
     <div class="row" style="justify-content:center;margin-top:14px">
       <button class="go" id="mkSavePlay">▶ Save &amp; play</button>
@@ -250,7 +254,7 @@
       2. <b>Move your mouse inside a circle</b> when it gets big. <b>No clicking!</b><br>
       3. Right on the beat = <b style="color:#ffd23d">PERFECT</b>. Keep hitting them for a big combo.<br>
       4. <b style="color:#ff3d8b">Pink circles</b> are words from the song.<br>
-      5. Pick <b>Easy</b> to start. <b>Insane</b> is every beat. Press <span class="key">Esc</span> to stop.
+      5. Pick <b>Easy</b> to start. <b>Insane</b> is every beat. Press <span class="key">Esc</span> to pause or stop.
     </p>
     <p class="hint">Play a song in your Spotify app, play a music file, or make your own level.</p>
     <div class="row" style="justify-content:center">
@@ -1297,6 +1301,7 @@ async function drawLevels() {
     const t = document.createElement('div'); t.className = 't'; t.textContent = lv.name;
     const sc = best['lv:' + lv.id + diff];
     const s = document.createElement('div'); s.className = 'b'; s.textContent = [lv.song, lv.by && 'by ' + lv.by].filter(Boolean).join(' · ') + (lv.song || lv.by ? ' · ' : '') + `${lv.notes.length} circle${lv.notes.length === 1 ? '' : 's'}` + (sc ? ` · best ${sc.toLocaleString()}` : '');
+    s.title = s.textContent;   // full text when you hover
     txt.append(t, s);
     const x = document.createElement('div'); x.className = 'x';
     const share = document.createElement('button'); share.textContent = '📤'; share.title = 'Save a file you can send to a friend';
