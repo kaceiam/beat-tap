@@ -648,7 +648,7 @@ let G = null;
 function newGame(mode, id) {
   $('results').classList.remove('show');
   const name = mode === 'file' ? G_fileName : id ? (info[id]?.t || 'Spotify song') : 'Spotify';
-  G = { mode, id, name, notes: [], pops: [], bursts: [], score: 0, combo: 0, maxCombo: 0, hits: { perfect: 0, good: 0, ok: 0, miss: 0 },
+  G = { mode, id, name, notes: [], pops: [], bursts: [], trail: [], sparks: [], score: 0, combo: 0, maxCombo: 0, hits: { perfect: 0, good: 0, ok: 0, miss: 0 },
         lastPos: { x: W / 2, y: H / 2 }, over: false, flash: 0, beatCount: 0, nextBeat: 0,
         heardAt: 0, quietSince: 0, fileIdx: 0, startedAt: actx ? actx.currentTime - 0.5 : 0 };
   $('songName').textContent = name;
@@ -851,6 +851,9 @@ function judge(note, d) {
   if (m > before) popText(W / 2, H * 0.2, '×' + m + ' SCORE!', '#ffd23d');
   popText(p.x, p.y - 70 * p.s, { perfect: 'PERFECT', good: 'GOOD', ok: 'OK' }[kind], { perfect: '#ffd23d', good: '#3dffa0', ok: '#3dd6ff' }[kind]);
   G.flash = 1; updateHud();
+  // little sparkles fly off the circle you hit
+  const col = { perfect: '#ffd23d', good: '#3dffa0', ok: '#3dd6ff' }[kind];
+  for (let i = 0; i < 10; i++) { const a = Math.random() * 6.28, v = 120 + Math.random() * 220; G.sparks.push({ x: p.x, y: p.y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, col, born: performance.now() }); }
 }
 function miss(note) {
   const p = proj(note, now()); note.hx = p.x; note.hy = p.y; note.hs = p.s;
@@ -1053,6 +1056,24 @@ function loop() {
     g.strokeStyle = '#fff'; g.lineWidth = 3 * p.s; g.beginPath(); g.arc(p.x, p.y, rr, 0, 7); g.stroke();
     g.globalAlpha = 1;
   }
+  // mouse trail: a fading line behind the mouse (last 0.15 seconds)
+  const tr = G.trail, lastT = tr[tr.length - 1];
+  if (!lastT || lastT.x !== mouse.x || lastT.y !== mouse.y) tr.push({ x: mouse.x, y: mouse.y, at: real });
+  while (tr.length && real - tr[0].at > 150) tr.shift();
+  g.lineCap = 'round'; g.strokeStyle = '#ffffff';
+  for (let i = 1; i < tr.length; i++) {
+    const k = 1 - (real - tr[i].at) / 150;
+    g.globalAlpha = k * 0.5; g.lineWidth = 2 + k * 8;
+    g.beginPath(); g.moveTo(tr[i - 1].x, tr[i - 1].y); g.lineTo(tr[i].x, tr[i].y); g.stroke();
+  }
+  // hit sparkles
+  G.sparks = G.sparks.filter(s => real - s.born < 450);
+  for (const s of G.sparks) {
+    const k = (real - s.born) / 450, d = k * 0.45 * (1 - k * 0.5);
+    g.globalAlpha = 1 - k; g.fillStyle = s.col;
+    g.fillRect(s.x + s.vx * d - 3, s.y + s.vy * d - 3, 6, 6);
+  }
+  g.globalAlpha = 1;
   // combo-broken burst: 14 red bits fly out and fade
   G.bursts = G.bursts.filter(b => real - b.born < 550);
   for (const b of G.bursts) {
