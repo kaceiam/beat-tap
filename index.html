@@ -270,7 +270,7 @@
       2. <b>Move your mouse inside a circle</b> when it gets big. <b>No clicking!</b><br>
       3. Right on the beat = <b style="color:#ffd23d">PERFECT</b>. Keep hitting them for a big combo.<br>
       4. <b style="color:#ff3d8b">Pink circles</b> are words from the song.<br>
-      5. <b style="color:#7dff9a">Green circles</b> have a trail: follow the ball with your mouse. A <b style="color:#ffd23d">gold ring</b> in the middle: circle your mouse around it! Two circles <b>joined by a line</b>: sweep through both.<br>
+      5. <b style="color:#7dff9a">Green circles</b> have a trail: follow the ball with your mouse. A <b style="color:#ffd23d">gold ring</b> in the middle: circle your mouse around it! Two circles <b>joined by a line</b>: sweep through both. <b style="color:#c07dff">Purple circles</b>: keep your mouse in them until the ring shrinks away.<br>
       6. Pick <b>Easy</b> to start. <b>Insane</b> is every beat. Press <span class="key">Esc</span> to pause or stop.
     </p>
     <p class="hint">Play a song in your Spotify app, play a music file, or make your own level.</p>
@@ -750,7 +750,7 @@ function newGame(mode, id) {
     }
     // Trails and spinners: planned for music files and starter levels; a level someone made keeps its own.
     G.specials = !G.level || String(id).startsWith('st:') ? planSpecials(G.fileNotes)
-      : G.level.notes.map(n => n.slide ? { slide: n.slide, path: n.path } : n.spin ? { spin: n.spin } : n.pair ? { pair: n.pair } : null);
+      : G.level.notes.map(n => n.slide ? { slide: n.slide, path: n.path } : n.spin ? { spin: n.spin } : n.hold ? { hold: n.hold } : n.pair ? { pair: n.pair } : null);
     // If the first circle comes very early, wait a moment before the song starts so it has time to fly in.
     const lead = Math.max(0.1, LEVELS[diff].approach + 0.3 - (G.fileNotes[0] ?? 9));
     fileSrc = actx.createBufferSource(); fileSrc.buffer = audioBuf; fileSrc.connect(musicOut());
@@ -872,7 +872,7 @@ function placeNote(ln) {
 // SPINNER (gold ring in the middle): circle your mouse around it as many times as it asks.
 // They only go where the music leaves room: a spinner in a long gap, a trail now and then.
 function planSpecials(times) {
-  const out = []; let since = 0, sincePair = 0;
+  const out = []; let since = 0, sincePair = 0, holdNext = false;
   for (let i = 0; i < times.length; i++) {
     const gap = (times[i + 1] ?? times[i] + 3) - times[i];
     if (gap >= 2.5 && i < times.length - 1) { out[i] = { spin: gap - 0.7 }; since = 0; continue; }
@@ -881,7 +881,7 @@ function planSpecials(times) {
     const gapBefore = i ? times[i] - times[i - 1] : 9;
     if (sincePair >= 7 && since >= 3 && gap >= 0.45 && gapBefore >= 0.45) { out[i] = { pair: true }; sincePair = 0; continue; }
     if (since < 6) continue;
-    if (gap >= 0.7) { out[i] = { slide: Math.min(gap - 0.3, 1.4) }; since = 0; continue; }
+    if (gap >= 0.7) { out[i] = (holdNext = !holdNext) ? { hold: Math.min(gap - 0.3, 1.4) } : { slide: Math.min(gap - 0.3, 1.4) }; since = 0; continue; }   // trails and holds take turns
     // Circles close together? The trail can run over the next one instead (that circle is left out).
     const g2 = (times[i + 2] ?? Infinity) - times[i];
     if (g2 >= 0.8 && g2 <= 1.6 && !out[i + 1]) { out[i] = { slide: g2 - 0.3 }; out[i + 1] = { skip: true }; since = 0; i++; }
@@ -906,6 +906,8 @@ function addPartner(n, at) {   // at = a spot someone picked in the level maker 
 function setupSpecial(n, sp) {
   if (!n || !sp) return n;
   if (sp.pair) return addPartner(n, Array.isArray(sp.pair) ? sp.pair : null);
+  // HOLD (purple): a trail that stays in one spot. Keep your mouse in it until the ring shrinks away.
+  if (sp.hold) { Object.assign(n, { slide: sp.hold, hold: true, pts: [{ x: n.x, y: n.y }, { x: n.x, y: n.y }], on: 0, total: 0 }); return n; }
   const b = midBox();
   if (sp.spin) { Object.assign(n, { spin: sp.spin, x: b.cx, y: b.cy, turns: 0, need: Math.max(2, Math.round(sp.spin * 1.1)), lastA: null }); return n; }
   if (sp.path && sp.path.length >= 2) {   // a trail someone drew in the level maker: use their path
@@ -955,7 +957,7 @@ function spinTick(n, t) {
 function slideTick(n, t) {
   const k = (t - n.t) / n.slide, b = along(n.pts, k);
   n.total++; if (Math.hypot(b.x - mouse.x, b.y - mouse.y) <= LEVELS[diff].radius * 1.3) n.on++;
-  if (k >= 1) endSpecial(n, n.on / n.total >= 0.7, 'TRAIL!', 'SLIPPED', b);
+  if (k >= 1) endSpecial(n, n.on / n.total >= 0.7, n.hold ? 'HOLD!' : 'TRAIL!', n.hold ? 'LET GO' : 'SLIPPED', b);
 }
 function endSpecial(n, ok, yes, no, at) {
   const p = at || { x: n.x, y: n.y };
@@ -977,6 +979,15 @@ function drawSpecial(n, t, far) {
     g.fillStyle = '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = 'bold 30px system-ui';
     g.fillText(t < n.t ? 'SPIN IT! ⟳' : Math.floor(n.turns) + ' / ' + n.need, n.x, n.y);
     g.globalAlpha = 1;
+    return;
+  }
+  if (n.hold) {   // hold: a purple ring that shrinks while you keep your mouse in the circle
+    if (!n.sliding) return;
+    const k = Math.min(1, Math.max(0, (t - n.t) / n.slide)), on = Math.hypot(n.x - mouse.x, n.y - mouse.y) <= r * 1.3;
+    g.fillStyle = '#c07dff44'; g.beginPath(); g.arc(n.x, n.y, r * 1.3, 0, 7); g.fill();
+    g.strokeStyle = on ? '#fff' : '#ff4d4d'; g.lineWidth = 4; g.beginPath(); g.arc(n.x, n.y, r * 1.3, 0, 7); g.stroke();
+    g.strokeStyle = '#c07dff'; g.lineWidth = 10; g.beginPath(); g.arc(n.x, n.y, Math.max(1, r * 1.3 * (1 - k)), 0, 7); g.stroke();
+    g.fillStyle = '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = 'bold 26px system-ui'; g.fillText('HOLD', n.x, n.y);
     return;
   }
   // trail: the path (shows up as the circle gets close), then the ball you follow
@@ -1321,7 +1332,7 @@ function loop() {
     if (n.spin) { drawSpecial(n, t, far); continue; }
     if (n.slide) drawSpecial(n, t, far);
     if (n.sliding) continue;
-    const col = n.word ? "#ff3d8b" : n.slide ? "#7dff9a" : TH.circle;   // pink = a word from the song, green = a trail
+    const col = n.word ? "#ff3d8b" : n.hold ? "#c07dff" : n.slide ? "#7dff9a" : TH.circle;   // pink = a word from the song, purple = hold, green = a trail
     g.globalAlpha = Math.min(1, (1 - far) * 5);
     g.fillStyle = col; g.beginPath(); g.arc(p.x, p.y, rr, 0, 7); g.fill();
     g.fillStyle = TH.bg; g.beginPath(); g.arc(p.x, p.y, rr * 0.72, 0, 7); g.fill();
@@ -1441,7 +1452,7 @@ mkcv.addEventListener('contextmenu', e => {
 let mkTool = 'circle', mkDrag = null;
 const MK_HELP = {
   circle: 'Click where you want a circle, right on the beat 🎵',
-  trail: 'Press where the trail starts, on the beat, then hold and draw the path. Let go where it ends 〰',
+  trail: 'Press where the trail starts, on the beat, then hold and draw the path. Let go where it ends 〰 (Hold still without moving = a purple HOLD circle)',
   spin: 'Press and hold for as long as the spinner should last ⟳',
   double: 'Press where the first circle goes, on the beat, then drag to where the second one goes and let go ◎◎',
 };
@@ -1477,6 +1488,7 @@ addEventListener('mouseup', () => {
   const dur = r3(mkTime() - d.t);
   if (d.kind === 'trail') {
     if (dur >= 0.25 && d.path.length >= 2) MK.notes.push({ t: r3(d.t), x: d.x, y: d.y, slide: Math.min(dur, 5), path: d.path });
+    else if (dur >= 0.4) MK.notes.push({ t: r3(d.t), x: d.x, y: d.y, hold: Math.min(dur, 5) });   // held still: a HOLD circle
     else MK.notes.push({ t: r3(d.t), x: d.x, y: d.y });   // too short to be a trail: just a circle
   } else if (d.kind === 'double') {
     const b = midBox(), e = d.end, far = e && Math.hypot((e[0] - d.x) * b.hx, (e[1] - d.y) * b.hy) >= LEVELS[diff].radius * 1.5;
@@ -1554,6 +1566,10 @@ function drawMaker() {
     const d = t - n.t;
     if (n.spin && d > -0.5 && d < n.spin + 0.3) { mg.globalAlpha = d < 0 ? 0.4 : 1; drawSpin(Math.min(1, Math.max(0, d / n.spin)), '⟳ SPINNER'); }
     if (n.slide && n.path && d > -0.5 && d < n.slide + 0.3) { mg.globalAlpha = d < 0 ? 0.4 : 1; drawPath(n.path, d >= 0 && d <= n.slide ? d / n.slide : -1); }
+    if (n.hold && d >= 0 && d < n.hold) {   // a hold: purple ring shrinking while it lasts
+      const [x, y] = toScreen([n.x, n.y]); mg.globalAlpha = 1; mg.strokeStyle = '#c07dff'; mg.lineWidth = 8;
+      mg.beginPath(); mg.arc(x, y, Math.max(1, r * 1.3 * (1 - d / n.hold)), 0, 7); mg.stroke();
+    }
   }
   mg.globalAlpha = 1;
   const drawLink = (n, p2) => {   // the dashed line between the two circles of a double
@@ -1598,9 +1614,9 @@ function drawMaker() {
   const bx = 20, bw = W - 40, by = H - 26;
   mg.fillStyle = '#2b2550'; mg.fillRect(bx, by, bw, 8);
   mg.fillStyle = '#ff3d8b'; mg.fillRect(bx, by, bw * Math.max(0, Math.min(1, t / dur)), 8);
-  for (const n of all) {   // blue = circle, green = trail, gold = spinner, white = double
-    mg.fillStyle = n.spin ? '#ffd23d' : n.slide ? '#7dff9a' : n.pair ? '#fff' : '#3dd6ff';
-    const w = n.spin || n.slide ? Math.max(2, bw * (n.spin || n.slide) / dur) : 2;
+  for (const n of all) {   // blue = circle, green = trail, gold = spinner, white = double, purple = hold
+    mg.fillStyle = n.spin ? '#ffd23d' : n.slide ? '#7dff9a' : n.hold ? '#c07dff' : n.pair ? '#fff' : '#3dd6ff';
+    const w = n.spin || n.slide || n.hold ? Math.max(2, bw * (n.spin || n.slide || n.hold) / dur) : 2;
     mg.fillRect(bx + bw * n.t / dur - 1, by - 6, w, 6);
   }
   if (t < 0) { mg.fillStyle = '#fff'; mg.font = 'bold 40px system-ui'; mg.textAlign = 'center'; mg.fillText('Get ready...', W / 2, H * 0.5); }
@@ -1687,6 +1703,7 @@ $('lvFile').onchange = async () => {
         const path = n.path.slice(0, 60).map(p => [clamp1(+(p && p[0])), clamp1(+(p && p[1]))]).filter(p => isFinite(p[0]) && isFinite(p[1]));
         if (path.length >= 2) { c.slide = Math.min(5, Math.max(0.2, +n.slide)); c.path = path; }
       }
+      else if (+n.hold > 0) c.hold = Math.min(5, Math.max(0.2, +n.hold));
       else if (Array.isArray(n.pair) && isFinite(+n.pair[0]) && isFinite(+n.pair[1])) c.pair = [clamp1(+n.pair[0]), clamp1(+n.pair[1])];
       return c;
     }).filter(n => isFinite(n.t) && isFinite(n.x) && isFinite(n.y) && n.t >= 0).sort((a, b) => a.t - b.t).slice(0, 20000);
