@@ -414,9 +414,12 @@ function findBeat() {
   // how well the song matches itself shifted by each amount
   const minLag = Math.floor(0.25 / dt), maxLag = Math.ceil(5.6 / dt);
   const ac = new Float32Array(maxLag + 2);
+  // The last few seconds count more, so it notices quickly when a song changes speed.
+  const wt = new Float32Array(n);
+  for (let i = 0; i < n; i++) wt[i] = Math.exp(-(n - 1 - i) * dt / 3);
   for (let lag = minLag; lag <= maxLag + 1 && lag < n; lag++) {
-    let s = 0; for (let i = lag; i < n; i++) s += y[i] * y[i - lag];
-    ac[lag] = s / (n - lag);
+    let s = 0, ws = 0; for (let i = lag; i < n; i++) { s += wt[i] * y[i] * y[i - lag]; ws += wt[i]; }
+    ac[lag] = s / (ws + 1e-9);
   }
   const A = l => { const i = Math.floor(l), f = l - i; return i + 1 <= maxLag + 1 ? ac[i] * (1 - f) + ac[i + 1] * f : 0; };
   // best match near a spot (small rounding adds up over several beats, so allow a little room)
@@ -432,8 +435,10 @@ function findBeat() {
     if (s > bestS) { bestS = s; best = lag; }
   }
   if (!best) return;
-  const lagF = best;
-  beat.sure = bestS / (sum / cnt + 1e-9);
+  const lagF = best, sure = bestS / (sum / cnt + 1e-9);
+  // Not sure right now (like a drum break)? Keep going with the beat we already had.
+  if (beat.period && sure < 3) return;
+  beat.sure = sure;
   const period = lagF * dt;
   // Where do the beats land? Try every starting point; recent beats count more.
   let bestOff = 0, bestSum = -1;
@@ -452,7 +457,7 @@ function findBeat() {
     const k = Math.round((last - beat.last) / beat.period), want = beat.last + k * beat.period;
     let d = last - want; if (Math.abs(d) > beat.period / 2) d = 0;
     beat.last = want + d * 0.5;
-  } else if (!beat.period || ++beat.changes >= 3) {   // a new speed 3 times in a row = the song changed speed
+  } else if (!beat.period || ++beat.changes >= 2) {   // a new speed twice in a row = the song changed speed
     beat.period = period; beat.last = last; beat.changes = 0; tempoChanged();
   }
 }
