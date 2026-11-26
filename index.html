@@ -526,7 +526,7 @@ $('file').onchange = async () => {
   $('addMsg').textContent = '';
   G_fileName = f.name.replace(/\.[^.]+$/, '');
   G_level = null;
-  newGame('file', null);
+  newGame('file', 'file:' + G_fileName);   // remembers your best score for this music file
   $('file').value = '';
 };
 let G_fileName = '', G_level = null, fileGrid = [];
@@ -852,7 +852,7 @@ function finish() {
   const grade = G.hits.miss === 0 && a >= 95 ? 'S' : a >= 90 ? 'A' : a >= 80 ? 'B' : a >= 70 ? 'C' : 'D';
   let newBest = false;
   if (G.id) { const k = G.id + diff; if (G.score > (best[k] || 0)) { best[k] = G.score; store.set('best', best); newBest = true; } }
-  $('resTitle').textContent = newBest ? 'New best score! 🎉' : 'Song done!';
+  $('resTitle').textContent = newBest ? 'New best score! 🎉' : G.id && best[G.id + diff] ? 'Song done! Your best: ' + best[G.id + diff].toLocaleString() : 'Song done!';
   $('resNext').textContent = G.mode === 'listen' && stream ? 'Play the next song in Spotify and the circles start by themselves.' : '';
   $('resGrade').textContent = grade;
   $('resStats').innerHTML = `Score: <b>${G.score.toLocaleString()}</b><br>Accuracy: <b>${a.toFixed(1)}%</b> · Best combo: <b>${G.maxCombo}x</b><br>` +
