@@ -525,19 +525,29 @@ function findBeat() {
   const Am = (c, w) => { if (c + w > maxLag) return 0; let m = A(c); for (let i = Math.ceil(c - w); i <= c + w; i++) if (ac[i] > m) m = ac[i]; return m; };
   // Score each beat length (60 to 180 BPM): it should match at 1, 2, 4 and 8 beats (a whole bar or two),
   // and songs are usually near 115 BPM.
+  const scoreOf = lag => (Am(lag, 0.5) + 0.6 * Am(2 * lag, 1) + 0.35 * Am(lag / 2, 0.5) + Am(4 * lag, 1.5) + 0.5 * Am(8 * lag, 2.5))
+    * Math.exp(-0.5 * Math.pow(Math.log2(60 / (lag * dt) / 115) / 0.75, 2));
   let best = 0, bestS = 0, sum = 0, cnt = 0;
   for (let lag = 60 / 180 / dt; lag <= 60 / 60 / dt; lag += 0.25) {
-    let s = Am(lag, 0.5) + 0.6 * Am(2 * lag, 1) + 0.35 * Am(lag / 2, 0.5) + Am(4 * lag, 1.5) + 0.5 * Am(8 * lag, 2.5);
-    const bpm = 60 / (lag * dt);
-    s *= Math.exp(-0.5 * Math.pow(Math.log2(bpm / 115) / 0.75, 2));
+    const s = scoreOf(lag);
     sum += s; cnt++;
     if (s > bestS) { bestS = s; best = lag; }
   }
   if (!best) return;
   const lagF = best, sure = bestS / (sum / cnt + 1e-9);
-  // Not sure right now (like a drum break)? Keep going with the beat we already had.
-  if (beat.period && sure < 3) return;
-  beat.sure = sure;
+  // Not sure right now (like a drum break)? Keep going with the beat we already had...
+  // ...unless the not-sure guesses keep agreeing on a different speed for about 2 seconds AND that speed fits the
+  // music clearly better than the one we have. (Soft, jazzy drums are never very "sure", but they're steady.
+  // Without this it could stay stuck on a wrong early guess. Songs where two speeds fit about equally stay put.)
+  if (beat.period && sure < 3) {
+    const p = lagF * dt;
+    if (Math.abs(p - beat.period) / beat.period < 0.04) { beat.unsure = 0; return; }
+    if (bestS < 1.3 * scoreOf(beat.period / dt)) { beat.unsure = 0; return; }
+    if (beat.cand && Math.abs(p - beat.cand) / beat.cand < 0.04) beat.unsure++; else { beat.cand = p; beat.unsure = 1; }
+    if (beat.unsure < 8) return;
+    beat.unsure = 0; beat.changes = 99;   // switch to it below
+  } else beat.unsure = 0;
+  beat.sure = Math.max(sure, 3);
   const period = lagF * dt;
   // Where do the beats land? Try every starting point; recent beats count more.
   let bestOff = 0, bestSum = -1;
@@ -560,7 +570,7 @@ function findBeat() {
     beat.period = period; beat.last = last; beat.changes = 0; tempoChanged();
   }
 }
-function resetBeat() { beat.period = 0; beat.sure = 0; beat.changes = 0; hopN = 0; tempoChanged(); }
+function resetBeat() { beat.period = 0; beat.sure = 0; beat.changes = 0; beat.unsure = 0; beat.cand = 0; hopN = 0; tempoChanged(); }
 function tempoChanged() {
   if (!G || G.mode !== 'listen') return;
   const t = now();
@@ -678,7 +688,7 @@ function newGame(mode, id) {
     }).catch(() => {});
   }
   if (mode === 'listen') {
-    beat.period = 0; beat.sure = 0; beat.changes = 0; hopN = 0; loudAvg = 0; loudSong = 0;
+    beat.period = 0; beat.sure = 0; beat.changes = 0; beat.unsure = 0; beat.cand = 0; hopN = 0; loudAvg = 0; loudSong = 0;
   } else {
     if (fileSrc) { fileSrc.onended = null; try { fileSrc.stop(); } catch {} }
     G.level = G_level;
