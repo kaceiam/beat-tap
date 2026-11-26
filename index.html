@@ -1100,6 +1100,8 @@ mkcv.addEventListener('mousedown', e => {
   if (!MK || MK.over) return;
   let t = mkTime(); if (t < 0) return;
   t = mkSnapTime(t);
+  // Already a circle at this exact moment? Move it here instead of making two you can't both hit.
+  for (const n of mkAll()) if (Math.abs(n.t - t) < 0.03) { const i = MK.notes.indexOf(n); if (i >= 0) MK.notes.splice(i, 1); else MK.removed.add(n); }
   const b = midBox();
   MK.notes.push({ t: Math.round(t * 1000) / 1000,
                   x: Math.round(clamp1((e.clientX - b.cx) / b.hx) * 1000) / 1000,
