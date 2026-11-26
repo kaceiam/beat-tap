@@ -408,15 +408,25 @@ $('shareCancel').onclick = () => $('shareHelp').classList.remove('show');
 $('shareGo').onclick = async () => {
   try {
     const s = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }, systemAudio: 'include' });
+    // What did you share? (A window can't share sound, and a Chrome tab only shares that tab, not the Spotify app.)
+    const surface = s.getVideoTracks()[0]?.getSettings?.().displaySurface;
     s.getVideoTracks().forEach(t => t.stop()); // we only need the sound
-    if (!s.getAudioTracks().length) { $('shareErr').textContent = "No sound came through. Pick Entire screen and turn on 'Also share system audio'."; return; }
+    const tryAgain = (msg) => { s.getTracks().forEach(t => t.stop()); $('shareErr').textContent = msg; };
+    if (surface === 'browser') return tryAgain("You shared a Chrome tab, so the game would only hear that tab, not your Spotify app. Click 'OK, show the box' again and pick Entire screen.");
+    if (!s.getAudioTracks().length) {
+      return tryAgain(surface === 'window'
+        ? "You picked a window, and windows can't share sound. Click 'OK, show the box' again, pick Entire screen, and turn on 'Also share system audio'."
+        : "The sound switch was off. Click 'OK, show the box' again and turn on 'Also share system audio' at the bottom of the box before you click Share.");
+    }
     stream = s;
     await startEars(actx.createMediaStreamSource(stream));
     stream.getAudioTracks()[0].onended = () => { stream = null; };
     $('shareHelp').classList.remove('show');
     newGame('listen', pendingSong);
   } catch (e) {
-    $('shareErr').textContent = "That didn't work. Click 'OK, show the box' and try again.";
+    $('shareErr').textContent = e && e.name === 'NotAllowedError'
+      ? "You closed the box without sharing. Click 'OK, show the box' when you're ready."
+      : "That didn't work. Click 'OK, show the box' and try again.";
   }
 };
 
@@ -1046,7 +1056,8 @@ function loop() {
     }
     else if (G.heardAt && !G.quietSince) G.quietSince = at;
     if (at - beat.lastCalc > 0.25 && G.heardAt) { beat.lastCalc = at; findBeat(); }
-    if (!G.heardAt) $('msg').innerHTML = G.id ? 'Press ▶ play in your Spotify app' : 'Play a song in your Spotify app';
+    if (!G.heardAt) $('msg').innerHTML = (G.id ? 'Press ▶ play in your Spotify app' : 'Play a song in your Spotify app') +
+      (at - G.startedAt > 12 ? '<br><span style="font-size:17px;color:#ffd23d">Can\'t hear anything yet. Is Spotify playing, with its volume up and not muted?</span>' : '');
     else if (!beat.period || beat.sure < 3 || at - G.heardAt < 3) $('msg').innerHTML = 'Finding the beat... 🎵';
     else $('msg').innerHTML = '';
     if (G.quietSince && at - G.quietSince > 3) {
