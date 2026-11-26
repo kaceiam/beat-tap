@@ -558,10 +558,10 @@ function resize() {
 addEventListener('resize', resize); resize();
 
 const LEVELS = {
-  easy:   { approach: 1.4, radius: 115, gap: 0.65, slideEvery: 8 },
-  normal: { approach: 1.05, radius: 105, gap: 0.34, slideEvery: 8 },    // "Medium" on the buttons
-  hard:   { approach: 0.8, radius: 95, gap: 0.2, slideEvery: 12 },
-  insane: { approach: 0.65, radius: 90, gap: 0.12, slideEvery: 16 },  // every beat, plus the extra hits the song really has
+  easy:   { approach: 1.4, radius: 115, gap: 0.65 },
+  normal: { approach: 1.05, radius: 105, gap: 0.34 },    // "Medium" on the buttons
+  hard:   { approach: 0.8, radius: 95, gap: 0.2 },
+  insane: { approach: 0.65, radius: 90, gap: 0.12 },  // every beat, plus the extra hits the song really has
 };
 const WIN = { perfect: 0.06, good: 0.13, ok: 0.2 };
 
@@ -692,10 +692,9 @@ function showLyrics(t) {
   $('lyrics').append(a, b);
 }
 
-function makeNote(t, dur = 0) {
-  const L = LEVELS[diff];
+function makeNote(t) {
   // Don't put two circles on the same moment: reuse the one that's already there.
-  const dup = !dur && G.notes.find(n => !n.done && !n.slide && Math.abs(n.t - t) < 0.12);
+  const dup = G.notes.find(n => !n.done && Math.abs(n.t - t) < 0.12);
   if (dup) return dup;
   const a = Math.random() * Math.PI * 2, d = 140 + Math.random() * 200;
   const { cx, cy, hx, hy } = midBox();
@@ -704,19 +703,6 @@ function makeNote(t, dur = 0) {
   x = Math.min(cx + hx, Math.max(cx - hx, x)); y = Math.min(cy + hy, Math.max(cy - hy, y));
   const n = { t, x, y, done: false, ap: approachNow() };
   G.lastPos = { x, y };
-  if (dur) {
-    // Gold drag circle: a trail of 40 gold dots in a curvy pattern. Touch it, then drag along the trail.
-    const pts = makePath(x, y, Math.min(hx, hy) * (1.8 + Math.random() * 0.5), Math.atan2(cy - y, cx - x) + (Math.random() - 0.5) * 1.6);
-    // slide the whole pattern so it stays inside the middle box
-    let minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9;
-    for (const q of pts) { minX = Math.min(minX, q.x); maxX = Math.max(maxX, q.x); minY = Math.min(minY, q.y); maxY = Math.max(maxY, q.y); }
-    const dx = Math.max(0, (cx - hx) - minX) - Math.max(0, maxX - (cx + hx)), dy = Math.max(0, (cy - hy) - minY) - Math.max(0, maxY - (cy + hy));
-    for (const q of pts) { q.x += dx; q.y += dy; }
-    const dots = [];
-    for (let i = 0; i < 40; i++) dots.push({ k: i / 39, ...slideAt(pts, i / 39), got: false });
-    Object.assign(n, { slide: true, dur, pts, dots, x: pts[0].x, y: pts[0].y });
-    G.lastPos = pts[pts.length - 1];
-  }
   G.notes.push(n);
   return n;
 }
@@ -731,32 +717,6 @@ function placeNote(ln) {
   G.notes.push({ t: ln.t, x, y, done: false, ap: LEVELS[diff].approach });
   G.lastPos = { x, y };
 }
-// A different curvy pattern each time: wave, S-bend, zigzag, loop, spiral or a big arc.
-const PATTERNS = ['wave', 'S', 'zigzag', 'loop', 'spiral', 'arc'];
-function makePath(x, y, len, b) {
-  const kind = PATTERNS[Math.floor(Math.random() * PATTERNS.length)], flip = Math.random() < 0.5 ? -1 : 1;
-  const fx = Math.cos(b), fy = Math.sin(b), sx = -fy * flip, sy = fx * flip;   // forward and sideways
-  const pts = [];
-  for (let i = 0; i <= 120; i++) {
-    const u = i / 120;
-    let f = u * len, s = 0;
-    if (kind === 'wave') s = Math.sin(u * Math.PI * 3) * len * 0.16;
-    if (kind === 'S') s = Math.sin(u * Math.PI * 2) * len * 0.25;
-    if (kind === 'zigzag') { const z = (u * 4) % 1; s = (z < 0.5 ? z : 1 - z) * len * 0.4 - len * 0.1; }
-    if (kind === 'arc') s = Math.sin(u * Math.PI) * len * 0.35;
-    if (kind === 'loop' || kind === 'spiral') {
-      const R = len * 0.3 * (kind === 'spiral' ? 1 - u * 0.65 : 1), a = u * Math.PI * (kind === 'spiral' ? 3 : 1.75);
-      f = Math.sin(a) * R + u * len * 0.25; s = (1 - Math.cos(a)) * R;
-    }
-    pts.push({ x: x + fx * f + sx * s, y: y + fy * f + sy * s });
-  }
-  return pts;
-}
-function slideAt(pts, k) {
-  const f = Math.min(1, Math.max(0, k)) * (pts.length - 1), i = Math.min(pts.length - 2, Math.floor(f)), w = f - i;
-  return { x: pts[i].x + (pts[i + 1].x - pts[i].x) * w, y: pts[i].y + (pts[i + 1].y - pts[i].y) * w };
-}
-function slidePos(n, k) { return slideAt(n.pts, k); }   // where the gold ball is, k from 0 (start) to 1 (end)
 
 // Did the song have a hit (drum, note) at this moment? Used by Insane to copy the song's extra beats.
 function heardHit(time) {
@@ -831,31 +791,8 @@ const mouse = { x: -999, y: -999 };
 cv.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
 function touchNotes(t) {
   const r = LEVELS[diff].radius;
-  const reach = r;   // exactly the circle
   for (const n of G.notes) {
     if (n.done) continue;
-    if (n.started) {
-      // Following a gold drag circle: keep the mouse on the gold ball and it eats the dots as it goes.
-      const k = Math.min(1, (t - n.t) / n.dur), b = slidePos(n, k);
-      const on = Math.hypot(b.x - mouse.x, b.y - mouse.y) <= reach;
-      n.dots.forEach((d, i) => {
-        if (d.got || d.passed || d.k > k) return;
-        if (on) { d.got = true; G.score += Math.round(15 * (1 + G.combo / 25)); } else d.passed = true;
-      });
-      if (on) { n.lastOn = t; updateHud(); }
-      else if (t - n.lastOn > 0.3) {   // let go for too long
-        n.hx = b.x; n.hy = b.y; n.hs = 1; n.done = true; n.missed = true; n.hitAt = performance.now();
-        G.combo = 0; popText(b.x, b.y - 70, 'DROPPED', '#ff4d4d'); updateHud();
-        continue;
-      }
-      if (k >= 1) {   // made it to the end
-        n.hx = b.x; n.hy = b.y; n.hs = 1; n.done = true; n.hitAt = performance.now();
-        G.combo++; G.maxCombo = Math.max(G.maxCombo, G.combo);
-        G.score += Math.round(400 * (1 + G.combo / 25)); G.flash = 1;
-        popText(b.x, b.y - 70, 'DRAG COMBO! ' + n.dots.filter(d => d.got).length + '/40', '#ffd23d'); updateHud();
-      }
-      continue;
-    }
     if (n.t - t > 0.12 || t - n.t > WIN.ok) continue;   // right around the beat (a little early or late is fine)
     const p = proj(n, t);
     // Your mouse has to be inside the circle (anywhere in it). Getting there a bit early is fine:
@@ -863,8 +800,7 @@ function touchNotes(t) {
     if (Math.hypot(p.x - mouse.x, p.y - mouse.y) <= r * p.s) n.touched = true;   // only inside the circle
     if (!n.touched || n.t - t > 0.02) continue;
     const d = t < n.t ? 0 : n.t - t;
-    if (n.slide) { judge(n, d); n.done = false; n.started = true; n.lastOn = t; n.lastTick = t; }
-    else judge(n, d);
+    judge(n, d);
   }
 }
 addEventListener('keydown', e => {
@@ -960,7 +896,7 @@ function loop() {
     spawnWords(t);
     touchNotes(t);
     showLyrics(t);
-    for (const n of G.notes) if (!n.done && !n.started && t - n.t > WIN.ok) miss(n);
+    for (const n of G.notes) if (!n.done && t - n.t > WIN.ok) miss(n);
   }
   G.notes = G.notes.filter(n => !n.done || real - n.hitAt < 400);
   G.pops = G.pops.filter(p => real - p.born < 700);
@@ -994,28 +930,7 @@ function loop() {
       g.globalAlpha = 1; continue;
     }
     const p = proj(n, t), far = Math.max(0, Math.min(1, (n.t - t) / (n.ap || L.approach))), rr = r * p.s;
-    const col = n.slide ? '#ffd23d' : n.word ? '#ff3d8b' : '#3dd6ff';   // pink = a word from the song
-    if (n.slide) {
-      // the trail of 40 gold dots shows up as the circle gets close
-      const show = n.started ? 1 : Math.max(0, Math.min(1, (0.75 - far) * 2.5));
-      g.globalAlpha = show * 0.35; g.strokeStyle = '#ffd23d'; g.lineWidth = 3; g.lineCap = 'round';
-      g.beginPath(); n.pts.forEach((q, i) => i ? g.lineTo(q.x, q.y) : g.moveTo(q.x, q.y)); g.stroke();
-      const dr = 5;
-      n.dots.forEach((d, i) => {
-        if (d.got) return;
-        const appear = n.started ? 1 : Math.max(0, Math.min(1, show * 40 - i * 0.7));   // dots pop in one after another
-        g.globalAlpha = appear * (d.passed ? 0.25 : 1);
-        g.fillStyle = d.passed ? '#ff4d4d' : '#ffd23d';
-        g.beginPath(); g.arc(d.x, d.y, dr * (i === 39 ? 2.4 : 1), 0, 7); g.fill();
-      });
-      if (n.started) {
-        const b = slidePos(n, Math.min(1, (t - n.t) / n.dur)), on = Math.hypot(b.x - mouse.x, b.y - mouse.y) <= r * 1.5 + 25;
-        g.globalAlpha = 1;
-        g.fillStyle = '#ffd23d'; g.beginPath(); g.arc(b.x, b.y, r * 0.45, 0, 7); g.fill();
-        g.strokeStyle = on ? '#fff' : '#ff4d4d'; g.lineWidth = 4; g.beginPath(); g.arc(b.x, b.y, r * 0.95, 0, 7); g.stroke();
-        continue;
-      }
-    }
+    const col = n.word ? '#ff3d8b' : '#3dd6ff';   // pink = a word from the song
     g.globalAlpha = Math.min(1, (1 - far) * 5);
     g.fillStyle = col; g.beginPath(); g.arc(p.x, p.y, rr, 0, 7); g.fill();
     g.fillStyle = '#0d0b1a'; g.beginPath(); g.arc(p.x, p.y, rr * 0.72, 0, 7); g.fill();
