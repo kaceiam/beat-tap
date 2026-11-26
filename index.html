@@ -164,6 +164,10 @@
         <button id="syncReset">Reset</button>
       </div>
       <div class="row" style="margin-bottom:4px">
+        <span style="min-width:250px">🎨 Theme</span>
+        <span id="themes" class="row" style="margin:0;gap:6px"></span>
+      </div>
+      <div class="row" style="margin-bottom:4px">
         <span style="min-width:250px">🔍 Beat info corner (for testing)</span>
         <button id="infoBtn"></button>
         <span class="hint">Shows the speed, how sure the game is, and if it can hear your music.</span>
@@ -936,8 +940,10 @@ function slideTick(n, t) {
 function endSpecial(n, ok, yes, no, at) {
   const p = at || { x: n.x, y: n.y };
   n.done = true; n.sliding = false; n.hitAt = performance.now(); n.hx = p.x; n.hy = p.y; n.hs = 1; n.missed = !ok;
-  if (ok) { G.combo++; G.maxCombo = Math.max(G.maxCombo, G.combo); G.score += 300 * multOf(G.combo); G.flash = 1; }
-  else G.combo = 0;
+  if (ok) {
+    G.combo++; G.maxCombo = Math.max(G.maxCombo, G.combo); G.score += 300 * multOf(G.combo); G.flash = 1;
+    if (!G.practice) { if (n.spin) playStats.spins++; else playStats.trails++; store.set('playStats', playStats); }   // (for unlocking themes)
+  } else G.combo = 0;
   popText(p.x, p.y - 70, ok ? yes : no, ok ? '#7dff9a' : '#ff4d4d'); updateHud();
 }
 function drawSpecial(n, t, far) {
@@ -1114,14 +1120,54 @@ addEventListener('keydown', e => {
 });
 
 function stopMusic() { if (fileSrc) { fileSrc.onended = null; try { fileSrc.stop(); } catch {} fileSrc = null; } }
+// ---------- themes you unlock by playing ----------
+// A theme changes the background, the tunnel and the plain circles. Pink (words), green (trails) and
+// gold (spinners) always stay the same, so you can still tell them apart.
+const THEMES = [
+  { id: 'night', name: 'Night', icon: '🌙', bg: '#0d0b1a', tunnel: '#1f1a3d', circle: '#3dd6ff', flash: '255,61,139', how: 'Ready from the start' },
+  { id: 'galaxy', name: 'Galaxy', icon: '🌌', bg: '#140726', tunnel: '#2e1650', circle: '#b28bff', flash: '178,139,255', how: 'Finish 3 songs', need: s => s.songs >= 3 },
+  { id: 'volcano', name: 'Volcano', icon: '🌋', bg: '#1e0806', tunnel: '#46160f', circle: '#ff9a3d', flash: '255,120,40', how: 'Get a 50 combo', need: s => s.bestCombo >= 50 },
+  { id: 'snow', name: 'Snow', icon: '❄️', bg: '#141c2b', tunnel: '#2c3b55', circle: '#f2f4ff', flash: '220,235,255', how: 'Get 300 PERFECTs', need: s => s.perfects >= 300 },
+  { id: 'ruby', name: 'Ruby', icon: '💎', bg: '#1c0610', tunnel: '#421126', circle: '#ff5a6e', flash: '255,90,110', how: 'Finish 10 spinners', need: s => s.spins >= 10 },
+  { id: 'ice', name: 'Ice', icon: '🧊', bg: '#06141e', tunnel: '#11324a', circle: '#9ad8ff', flash: '154,216,255', how: 'Finish 20 trails', need: s => s.trails >= 20 },
+  { id: 'champion', name: 'Champion', icon: '🏆', bg: '#17120a', tunnel: '#3a2c12', circle: '#fff3c4', flash: '255,243,196', how: 'Get an S grade', need: s => s.sGrades >= 1 },
+];
+let playStats = Object.assign({ songs: 0, perfects: 0, bestCombo: 0, spins: 0, trails: 0, sGrades: 0 }, store.get('playStats', {}));
+let themeId = store.get('theme', 'night');
+const themeOpen = th => !th.need || th.need(playStats);
+const theme = () => { const th = THEMES.find(x => x.id === themeId); return th && themeOpen(th) ? th : THEMES[0]; };
+function drawThemes() {
+  const box = $('themes'); box.innerHTML = '';
+  for (const th of THEMES) {
+    const b = document.createElement('button'), open = themeOpen(th);
+    b.textContent = (open ? th.icon : '🔒') + ' ' + th.name;
+    b.title = open ? th.name : 'Locked: ' + th.how;
+    b.classList.toggle('on', th === theme());
+    b.style.opacity = open ? 1 : 0.45;
+    b.onclick = () => { if (!open) { b.textContent = '🔒 ' + th.how; return; } themeId = th.id; store.set('theme', themeId); drawThemes(); };
+    box.append(b);
+  }
+}
+// Count what you did, and say which themes just unlocked.
+function countPlay(grade) {
+  if (G.practice) return '';
+  const before = THEMES.filter(themeOpen).map(th => th.id);
+  playStats.songs++; playStats.perfects += G.hits.perfect; playStats.bestCombo = Math.max(playStats.bestCombo, G.maxCombo);
+  if (grade === 'S') playStats.sGrades++;
+  store.set('playStats', playStats); drawThemes();
+  const fresh = THEMES.filter(th => themeOpen(th) && !before.includes(th.id));
+  return fresh.length ? '🎨 New theme unlocked: ' + fresh.map(th => th.icon + ' ' + th.name).join(', ') + (fresh.length > 1 ? '! Pick one in Settings.' : '! Pick it in Settings.') : '';
+}
+
 function finish() {
   if (G.over) return; G.over = true; stopMusic();
   const a = accuracy();
   const grade = G.hits.miss === 0 && a >= 95 ? 'S' : a >= 90 ? 'A' : a >= 80 ? 'B' : a >= 70 ? 'C' : 'D';
+  const unlocked = countPlay(grade);
   let newBest = false;
   if (G.id && !G.practice) { const k = G.id + diff; if (G.score > (best[k] || 0)) { best[k] = G.score; store.set('best', best); newBest = true; } }
   $('resTitle').textContent = G.practice ? 'Practice done! 🐢 (scores don’t count)' : newBest ? 'New best score! 🎉' : G.id && best[G.id + diff] ? 'Song done! Your best: ' + best[G.id + diff].toLocaleString() : 'Song done!';
-  $('resNext').textContent = G.mode === 'listen' && stream ? 'Play the next song in Spotify and the circles start by themselves.' : '';
+  $('resNext').textContent = [unlocked, G.mode === 'listen' && stream ? 'Play the next song in Spotify and the circles start by themselves.' : ''].filter(Boolean).join(' ');
   $('resGrade').textContent = grade;
   $('resStats').innerHTML = `Score: <b>${G.score.toLocaleString()}</b><br>Accuracy: <b>${a.toFixed(1)}%</b> · Best combo: <b>${G.maxCombo}x</b><br>` +
     `<span style="color:#ffd23d">Perfect ${G.hits.perfect}</span> · <span style="color:#3dffa0">Good ${G.hits.good}</span> · <span style="color:#3dd6ff">OK ${G.hits.ok}</span> · <span style="color:#ff4d4d">Miss ${G.hits.miss}</span>`;
@@ -1214,10 +1260,11 @@ function loop() {
 
   // background tunnel
   G.flash *= 0.9;
-  g.fillStyle = '#0d0b1a'; g.fillRect(0, 0, W, H);
-  if (G.flash > 0.02) { g.fillStyle = `rgba(255,61,139,${G.flash * 0.08})`; g.fillRect(0, 0, W, H); }
+  const TH = theme();   // the colours of the theme you picked
+  g.fillStyle = TH.bg; g.fillRect(0, 0, W, H);
+  if (G.flash > 0.02) { g.fillStyle = `rgba(${TH.flash},${G.flash * 0.08})`; g.fillRect(0, 0, W, H); }
   const cx = W / 2, cy = H * 0.45;
-  g.strokeStyle = '#1f1a3d'; g.lineWidth = 2;
+  g.strokeStyle = TH.tunnel; g.lineWidth = 2;
   for (let i = 0; i < 16; i++) {
     const a = i / 16 * Math.PI * 2;
     g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx + Math.cos(a) * W, cy + Math.sin(a) * W); g.stroke();
@@ -1244,10 +1291,10 @@ function loop() {
     if (n.spin) { drawSpecial(n, t, far); continue; }
     if (n.slide) drawSpecial(n, t, far);
     if (n.sliding) continue;
-    const col = n.word ? '#ff3d8b' : n.slide ? '#7dff9a' : '#3dd6ff';   // pink = a word from the song, green = a trail
+    const col = n.word ? "#ff3d8b" : n.slide ? "#7dff9a" : TH.circle;   // pink = a word from the song, green = a trail
     g.globalAlpha = Math.min(1, (1 - far) * 5);
     g.fillStyle = col; g.beginPath(); g.arc(p.x, p.y, rr, 0, 7); g.fill();
-    g.fillStyle = '#0d0b1a'; g.beginPath(); g.arc(p.x, p.y, rr * 0.72, 0, 7); g.fill();
+    g.fillStyle = TH.bg; g.beginPath(); g.arc(p.x, p.y, rr * 0.72, 0, 7); g.fill();
     if (n.word) {
       g.fillStyle = '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle';
       g.font = `bold ${Math.max(6, Math.round(rr * 0.42 * Math.min(1, 6 / Math.max(1, n.word.length))))}px system-ui`;
@@ -1756,7 +1803,7 @@ function drawBeatInfo() {
     timing,
   ].join('\n');
 }
-showInfoBtn();
+showInfoBtn(); drawThemes();
 showDiff(); showSync(); showPractice(); drawSongs(); fetchNames(); drawLevels();
 requestAnimationFrame(loop);
 </script>
