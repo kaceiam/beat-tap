@@ -505,7 +505,8 @@ function onHop(r) {
   if (curLoud <= LOUD) { if (!quietFromT) quietFromT = r.t; }
   else { if (quietFromT && r.t - quietFromT > 0.4) loudStartT = r.t; quietFromT = 0; }
 }
-const LOUD = 3;          // louder than this = music is playing
+const LOUD = 1;          // louder than this = music is playing (low, so a quiet Spotify volume or a fade-out
+                         // is not mistaken for silence and doesn't end the game; a paused Spotify is true silence, 0)
 let loudStartT = 0, quietFromT = 1e-9;
 function listenFrame() { return curLoud; }
 
