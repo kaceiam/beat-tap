@@ -1351,13 +1351,18 @@ $('lvFile').onchange = async () => {
 };
 
 // ---------- starter levels ----------
-// Three original beats made right here in the code (drums, bass and a little tune), so anyone can play
+// Original beats made right here in the code (drums, bass and a little tune), so anyone can play
 // without Spotify or a music file. The circles land exactly on the beats.
 const STARTERS = [
   { key: 'chill', name: 'Chill Bounce', emoji: '🌴', bpm: 90, bars: 24, hats: 8, swingKick: false },
   { key: 'neon', name: 'Neon Run', emoji: '🌃', bpm: 120, bars: 32, hats: 8, swingKick: true },
   { key: 'turbo', name: 'Turbo Rush', emoji: '🚀', bpm: 150, bars: 40, hats: 16, swingKick: true },
+  { key: 'lofi', name: 'Lo-fi Rain', emoji: '🌧️', bpm: 75, bars: 20, hats: 8, style: 'lofi' },
+  { key: 'boss', name: 'Boss Fight', emoji: '👹', bpm: 140, bars: 40, hats: 16, style: 'boss' },
 ];
+// Boss Fight's tricky rhythm, in 16th notes of each bar (a 3-3-2 kick pattern). Snare rolls every 4th bar.
+const BOSS_KICK = [0, 3, 6, 10, 12];
+const BOSS_NOTES = { easy: [0, 6, 12], normal: [0, 3, 6, 10, 12], hard: [0, 3, 6, 8, 10, 12, 14], insane: [0, 3, 6, 8, 10, 12, 14] };
 const starterBufs = {};
 async function renderStarter(st) {
   if (starterBufs[st.key]) return starterBufs[st.key];
@@ -1366,30 +1371,36 @@ async function renderStarter(st) {
   let seed = 12345; const noise = () => (seed = (seed * 16807) % 2147483647) / 1073741823.5 - 1;
   const add = (t, dur, fn) => { const s0 = Math.round(t * sr), n = Math.min(Math.round(dur * sr), out.length - s0); for (let i = 0; i < n; i++) out[s0 + i] += fn(i / sr, i); };
   const kick = t => { let ph = 0; add(t, 0.35, n => { ph += 2 * Math.PI * (45 + 105 * Math.exp(-n / 0.03)) / sr; return Math.sin(ph) * Math.exp(-n / 0.09) * 0.9; }); };
-  const snare = t => { let prev = 0; add(t, 0.2, n => { const x = noise(), hp = x - prev; prev = x; return hp * Math.exp(-n / 0.045) * 0.3 + Math.sin(2 * Math.PI * 190 * n) * Math.exp(-n / 0.03) * 0.3; }); };
+  const lofi = st.style === 'lofi', boss = st.style === 'boss', s16 = beat / 4;
+  const snare = (t, loud = 1) => { let prev = 0; add(t, 0.2, n => { const x = noise(), hp = x - prev; prev = x; return (hp * Math.exp(-n / 0.045) * 0.3 + Math.sin(2 * Math.PI * 190 * n) * Math.exp(-n / 0.03) * 0.3) * loud; }); };
   const hat = (t, loud, fall) => { let prev = 0; add(t, fall * 5, n => { const x = noise(), hp = x - prev; prev = x; return hp * Math.exp(-n / fall) * loud; }); };
-  const bass = (t, f, dur) => { let lp = 0; add(t, dur, n => { const saw = 2 * ((f * n) % 1) - 1; lp += 0.12 * (saw - lp); return lp * Math.min(1, n / 0.005) * Math.exp(-n / (dur * 1.5)) * 0.35; }); };
+  const bass = (t, f, dur) => { let lp = 0; add(t, dur, n => { const saw = 2 * ((f * n) % 1) - 1; lp += (lofi ? 0.04 : boss ? 0.22 : 0.12) * (saw - lp); return lp * Math.min(1, n / 0.005) * Math.exp(-n / (dur * 1.5)) * 0.35; }); };
   const pluck = (t, f, dur) => { let lp = 0; add(t, dur, n => { const sq = (f * n) % 1 < 0.5 ? 1 : -1; lp += 0.35 * (sq - lp); return lp * Math.exp(-n / (dur * 0.4)) * 0.07; }); };
-  // Am - F - C - G, one chord per bar
-  const roots = [110, 87.31, 130.81, 98], third = [1.189, 1.26, 1.26, 1.26];
+  // Am - F - C - G, one chord per bar (lo-fi: soft jazzy chords, boss: dark D minor)
+  const roots = lofi ? [87.31, 82.41, 73.42, 65.41] : boss ? [73.42, 73.42, 87.31, 65.41] : [110, 87.31, 130.81, 98];
+  const third = [1.189, 1.26, 1.26, 1.26], tune = lofi ? [2, 2.52, 3, 3.78] : boss ? [2, 2.38, 3, 2.83] : null;
   for (let bar = 0; bar < st.bars; bar++) {
     const t0 = bar * 4 * beat, r = roots[bar % 4], intro = bar < 2, outro = bar === st.bars - 1;
     for (let b = 0; b < 4; b++) {
       const t = t0 + b * beat;
-      if (b === 0 || b === 2 || intro) kick(t);
-      if (st.swingKick && b === 1 && !intro) kick(t + beat / 2);
-      if (!intro && (b === 1 || b === 3)) snare(t);
+      if (intro) { kick(t); continue; }
+      if (!st.style && (b === 0 || b === 2)) kick(t);
+      if (st.swingKick && b === 1) kick(t + beat / 2);
+      if (b === 1 || b === 3) snare(t, lofi ? 0.5 : 1);
     }
+    if (!intro && lofi) [0, 7, 10].forEach(k => kick(t0 + k * s16));
+    if (!intro && boss) { BOSS_KICK.forEach(k => kick(t0 + k * s16)); if (bar % 4 === 3) [13, 14, 15].forEach(k => snare(t0 + k * s16, 0.8)); }
     if (!intro) {
-      for (let h = 0; h < st.hats; h++) hat(t0 + h * 4 * beat / st.hats, h % 2 ? 0.1 : 0.16, 0.012);
+      for (let h = 0; h < st.hats; h++) hat(t0 + h * 4 * beat / st.hats + (lofi && h % 2 ? beat * 0.17 : 0), h % 2 ? 0.1 : 0.16, lofi ? 0.02 : 0.012);   // lo-fi hats swing
       for (let e = 0; e < 8; e++) bass(t0 + e * beat / 2, e % 4 === 3 ? r * 1.5 : r, beat / 2 * 0.9);
       if (bar >= 4) {   // little tune on top after the first few bars
-        const notes = [2, 2 * third[bar % 4], 3, 4];
+        const notes = tune || [2, 2 * third[bar % 4], 3, 4];
         for (let e = 0; e < 8; e++) pluck(t0 + e * beat / 2, r * notes[(e + bar) % 4], beat * 0.6);
       }
     }
     if (outro) hat(t0 + 4 * beat, 0.35, 0.3);   // crash at the end
   }
+  if (lofi) for (let i = 0; i < out.length; i++) { out[i] += noise() * 0.012; if (noise() > 0.9996) out[i] += 0.25; }   // vinyl crackle
   let peak = 0; for (let i = 0; i < out.length; i++) peak = Math.max(peak, Math.abs(out[i]));
   const k = 0.9 / (peak || 1); for (let i = 0; i < out.length; i++) out[i] *= k;
   const buf = actx.createBuffer(1, out.length, sr); buf.copyToChannel(out, 0);
@@ -1400,6 +1411,14 @@ function starterNotes(st) {
   const beat = 60 / st.bpm, step = { easy: 2, normal: 1, hard: 0.5, insane: 0.5 }[diff], out = [];
   let seed = st.bpm * 7 + 3; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
   let x = 0, y = 0;
+  const place = t => { const a = rnd() * Math.PI * 2, d = 0.5 + rnd() * 0.7; x = clamp1(x + Math.cos(a) * d); y = clamp1(y + Math.sin(a) * d); out.push({ t: Math.round(t * 1000) / 1000, x: Math.round(x * 1000) / 1000, y: Math.round(y * 1000) / 1000 }); };
+  if (st.style === 'boss') {   // circles follow the tricky rhythm, plus the snare rolls on Insane
+    for (let bar = 2; bar < st.bars - 1; bar++) {
+      const hits = BOSS_NOTES[diff].concat(diff === 'insane' && bar % 4 === 3 ? [13, 15] : []).sort((a, b) => a - b);
+      hits.forEach(k => place((bar * 16 + k) * beat / 4));
+    }
+    return out;
+  }
   for (let b = 8; b < (st.bars - 1) * 4; b += step) {
     // Hard: the in-between beats only every other bar. Insane: all of them.
     if (b % 1 && diff === 'hard' && Math.floor(b / 4) % 2) continue;
@@ -1412,7 +1431,9 @@ function starterNotes(st) {
 async function playStarter(st) {
   ensureCtx();
   $('addMsg').textContent = '';
+  if (!starterBufs[st.key]) { document.body.style.cursor = 'wait'; await new Promise(r => setTimeout(r, 30)); }   // takes under a second the first time
   try { audioBuf = await renderStarter(st); } catch { alert("That starter level didn't load."); return; }
+  finally { document.body.style.cursor = ''; }
   G_level = { id: 'st:' + st.key, name: st.name, notes: starterNotes(st) };
   G_fileName = st.name;
   newGame('file', 'st:' + st.key);
