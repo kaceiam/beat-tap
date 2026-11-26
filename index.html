@@ -41,6 +41,7 @@
   #game canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
   #hud { position: absolute; top: 12px; left: 16px; right: 16px; display: flex; justify-content: space-between; pointer-events: none; font-weight: 700; }
   #hud .big { font-size: 30px; }
+  input[type=range] { accent-color: #ff3d8b; padding: 0; border: 0; background: none; }
   #mult { font-size: 22px; color: #ffd23d; min-height: 26px; }
   #meter { width: 120px; height: 6px; background: #2b2550; border-radius: 3px; margin: 3px 0 4px auto; overflow: hidden; }
   #meter i { display: block; height: 100%; width: 0; background: #ffd23d; transition: width .15s; }
@@ -134,9 +135,25 @@
     <div class="row">
       <span class="hint" id="count"></span>
       <span style="flex:1"></span>
-      <span class="hint">Notes feel early or late? Beat sync:</span>
-      <button id="syncMinus">−</button><span id="syncVal" class="hint"></span><button id="syncPlus">+</button>
       <button id="clearBtn">Remove all songs</button>
+    </div>
+
+    <div class="panel">
+      <h3>⚙️ Settings</h3>
+      <div class="row">
+        <span style="min-width:250px">🔊 Music volume <span class="hint">(music files and levels)</span></span>
+        <input type="range" id="vol" min="0" max="100" step="5" style="flex:1;max-width:320px">
+        <span class="hint" id="volVal" style="min-width:48px"></span>
+      </div>
+      <div class="row" style="margin-bottom:4px">
+        <span style="min-width:250px">⏱️ Circles feel early or late?</span>
+        <span class="hint">earlier</span>
+        <input type="range" id="syncRange" min="-300" max="300" step="10" style="flex:1;max-width:320px">
+        <span class="hint">later</span>
+        <button id="syncMinus">−</button><span id="syncVal" class="hint" style="min-width:64px;text-align:center"></span><button id="syncPlus">+</button>
+        <button id="syncReset">Reset</button>
+      </div>
+      <p class="hint" style="margin:0">Saved on this computer. During a song you can also press <span class="key">←</span> or <span class="key">→</span>.</p>
     </div>
   </div>
 </div>
@@ -337,7 +354,19 @@ async function fetchNames() {
 
 function showDiff() { document.querySelectorAll('[data-diff]').forEach(b => b.classList.toggle('on', b.dataset.diff === diff)); }
 document.querySelectorAll('[data-diff]').forEach(b => b.onclick = () => { diff = b.dataset.diff; store.set('diff', diff); showDiff(); drawSongs(); });
-function showSync() { $('syncVal').textContent = (syncMs > 0 ? '+' : '') + syncMs + ' ms'; }
+function showSync() { $('syncVal').textContent = (syncMs > 0 ? '+' : '') + syncMs + ' ms'; $('syncRange').value = syncMs; }
+$('syncRange').oninput = () => { syncMs = +$('syncRange').value; store.set('sync2', syncMs); showSync(); };
+$('syncReset').onclick = () => { syncMs = 0; store.set('sync2', syncMs); showSync(); };
+// Music volume for music files and levels (Spotify has its own volume in the Spotify app).
+let musicVol = store.get('vol', 80), musicGain = null;
+function musicOut() {
+  if (!musicGain) { musicGain = actx.createGain(); musicGain.connect(actx.destination); }
+  musicGain.gain.value = musicVol / 100;
+  return musicGain;
+}
+function showVol() { $('vol').value = musicVol; $('volVal').textContent = musicVol + '%'; if (musicGain) musicGain.gain.value = musicVol / 100; }
+$('vol').oninput = () => { musicVol = +$('vol').value; store.set('vol', musicVol); showVol(); };
+showVol();
 $('syncMinus').onclick = () => { syncMs -= 10; store.set('sync2', syncMs); showSync(); };
 $('syncPlus').onclick = () => { syncMs += 10; store.set('sync2', syncMs); showSync(); };
 
@@ -654,7 +683,7 @@ function newGame(mode, id) {
     }
     // If the first circle comes very early, wait a moment before the song starts so it has time to fly in.
     const lead = Math.max(0.1, LEVELS[diff].approach + 0.3 - (G.fileNotes[0] ?? 9));
-    fileSrc = actx.createBufferSource(); fileSrc.buffer = audioBuf; fileSrc.connect(actx.destination);
+    fileSrc = actx.createBufferSource(); fileSrc.buffer = audioBuf; fileSrc.connect(musicOut());
     fileStartAt = actx.currentTime + lead; fileSrc.start(fileStartAt);
     fileSrc.onended = () => { if (G && G.mode === 'file') finish(); };
   }
@@ -1077,7 +1106,7 @@ $('mkFile').onchange = async () => {
 function startMaker() {
   mkStop();
   MK.notes = []; MK.removed = new Set(); MK.over = false;
-  MK.src = actx.createBufferSource(); MK.src.buffer = MK.buf; MK.src.connect(actx.destination);
+  MK.src = actx.createBufferSource(); MK.src.buffer = MK.buf; MK.src.connect(musicOut());
   MK.start = actx.currentTime + 1; MK.src.start(MK.start);
   MK.src.onended = () => endMaker();
   $('mkTitle').textContent = MK.name;
