@@ -151,7 +151,7 @@
   <div id="msg"></div>
   <div id="lyrics"></div>
   <button id="lyrBtn" style="display:none"></button>
-  <div id="help"><span class="key">Esc</span> stop · Circles early or late? Press <span class="key">←</span> or <span class="key">→</span></div>
+  <div id="help"><span class="key">Esc</span> <span id="escWord">stop</span> · Circles early or late? Press <span class="key">←</span> or <span class="key">→</span></div>
 </div>
 
 <!-- ============ LEVEL MAKER ============ -->
@@ -198,6 +198,19 @@
       <button id="shareCancel">Cancel</button>
     </div>
     <p class="hint" id="shareErr" style="color:#ff8080"></p>
+  </div>
+</div>
+
+<!-- Pause menu (music files and your own levels) -->
+<div class="overlay" id="pause">
+  <div class="card">
+    <h2>Paused ⏸</h2>
+    <p class="hint">Put your mouse back where you want it, then press Resume.</p>
+    <div class="row" style="justify-content:center">
+      <button class="go" id="pResume">▶ Resume</button>
+      <button id="pRestart">⟲ Restart</button>
+      <button id="pQuit">✖ Quit</button>
+    </div>
   </div>
 </div>
 
@@ -645,6 +658,8 @@ function newGame(mode, id) {
     fileStartAt = actx.currentTime + lead; fileSrc.start(fileStartAt);
     fileSrc.onended = () => { if (G && G.mode === 'file') finish(); };
   }
+  $('escWord').textContent = mode === 'file' ? 'pause' : 'stop';
+  $('pause').classList.remove('show');
   show('game');
 }
 function show(name) { document.querySelectorAll('.screen').forEach(s => s.classList.toggle('show', s.id === name)); }
@@ -850,7 +865,10 @@ function touchNotes(t) {
 }
 addEventListener('keydown', e => {
   if (e.code === 'Space' && $('game').classList.contains('show')) e.preventDefault();
-  if (e.code === 'Escape' && G && !G.over && $('game').classList.contains('show')) { G.byHand = true; finish(); }
+  if (e.code === 'Escape' && G && !G.over && $('game').classList.contains('show')) {
+    if (G.mode === 'file') { if (G.paused) resumeGame(); else pauseGame(); }   // music file or level: pause menu
+    else { G.byHand = true; finish(); }                                         // Spotify keeps playing, so Esc stops
+  }
   if (e.code === 'Escape' && $('howTo').classList.contains('show')) closeHow();
   if (e.code === 'Escape' && $('shareHelp').classList.contains('show')) $('shareHelp').classList.remove('show');
   if ((e.code === "ArrowLeft" || e.code === "ArrowRight") && G && $("game").classList.contains("show")) {
@@ -878,6 +896,18 @@ function finish() {
   $('results').classList.add('show');
 }
 $('againBtn').onclick = () => { if (G.mode === 'file') newGame('file', G.id); else startListening(G.id); };
+// Pause: only for music files and levels (the game can't pause Spotify).
+function pauseGame() {
+  if (!G || G.over || G.paused || G.mode !== 'file' || !$('game').classList.contains('show')) return;
+  G.paused = true; actx.suspend();   // freezes the song and the circles together
+  $('pause').classList.add('show');
+}
+function resumeGame() { if (!G || !G.paused) return; G.paused = false; actx.resume(); $('pause').classList.remove('show'); }
+$('pResume').onclick = resumeGame;
+$('pRestart').onclick = () => { G.paused = false; actx.resume(); $('pause').classList.remove('show'); newGame('file', G.id); };
+$('pQuit').onclick = () => { G.paused = false; actx.resume(); $('pause').classList.remove('show'); $('backBtn').onclick(); };
+document.documentElement.addEventListener('mouseleave', pauseGame);   // mouse went off the window
+addEventListener('blur', pauseGame);                                   // switched to another window
 $('backBtn').onclick = () => { stopMusic(); $('results').classList.remove('show'); G = null; libQuiet = false; show('library'); drawSongs(); drawLevels(); };
 
 // Where a note is on screen now: it flies from far away in the middle toward you,
@@ -938,7 +968,7 @@ function loop() {
   } else $('msg').innerHTML = '';
 
   const t = now();
-  if (!G.over) {
+  if (!G.over && !G.paused) {
     if (G.mode === 'file' || (G.heardAt && actx.currentTime - G.heardAt > 3 && !G.quietSince)) spawnNotes(t);
     spawnWords(t);
     touchNotes(t);
