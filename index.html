@@ -250,8 +250,9 @@ function drawSongs() {
     const s = info[id] || {};
     const d = document.createElement('div'); d.className = 'song';
     const b = best[id + diff];
-    d.innerHTML = (s.img ? `<img src="${s.img}" loading="lazy">` : '<div class="noimg"></div>') +
+    d.innerHTML = (s.img ? '<img loading="lazy">' : '<div class="noimg"></div>') +
       `<div style="min-width:0"><div class="t"></div><div class="b">${b ? 'Best: ' + b.toLocaleString() : 'Not played yet'}</div></div>`;
+    if (s.img) d.querySelector('img').src = s.img;
     d.querySelector('.t').textContent = s.t || 'Loading name...';
     d.onclick = () => playSong(id);
     box.appendChild(d);
@@ -262,7 +263,7 @@ function drawSongs() {
 let fetching = false;
 async function fetchNames() {
   if (fetching) return; fetching = true;
-  const todo = songs.filter(id => !info[id]);
+  const todo = songs.filter(id => !info[id] || info[id].fail);
   let lastDraw = 0;
   async function worker() {
     while (todo.length) {
@@ -270,7 +271,7 @@ async function fetchNames() {
       try {
         const j = await (await fetch('https://open.spotify.com/oembed?url=https://open.spotify.com/track/' + id)).json();
         info[id] = { t: j.title, img: j.thumbnail_url };
-      } catch { info[id] = { t: 'Unknown song' }; }
+      } catch { info[id] = { t: 'Unknown song', fail: true }; }   // tries again next time
       if (Date.now() - lastDraw > 800) { lastDraw = Date.now(); store.set('info', info); drawSongs(); }
     }
   }
@@ -386,7 +387,12 @@ function onHop(r) {
   prevL = L; prevH = Hh;
   hopT[hopN % KEEP] = r.t; hopO[hopN % KEEP] = o; hopN++;
   curLoud = Math.sqrt(r.a) * 1000;
+  // Remember the exact moment music starts after a quiet bit (used to line up the song words).
+  if (curLoud <= LOUD) { if (!quietFromT) quietFromT = r.t; }
+  else { if (quietFromT && r.t - quietFromT > 0.4) loudStartT = r.t; quietFromT = 0; }
 }
+const LOUD = 3;          // louder than this = music is playing
+let loudStartT = 0, quietFromT = 1e-9;
 function listenFrame() { return curLoud; }
 
 // Works out the song's speed and where its beats land, then the game can send circles
@@ -406,27 +412,27 @@ function findBeat() {
     y[i] = Math.max(0, x[i] - run / cnt);
   }
   // how well the song matches itself shifted by each amount
-  const minLag = Math.floor(0.25 / dt), maxLag = Math.ceil(3.4 / dt);
+  const minLag = Math.floor(0.25 / dt), maxLag = Math.ceil(5.6 / dt);
   const ac = new Float32Array(maxLag + 2);
   for (let lag = minLag; lag <= maxLag + 1 && lag < n; lag++) {
     let s = 0; for (let i = lag; i < n; i++) s += y[i] * y[i - lag];
     ac[lag] = s / (n - lag);
   }
   const A = l => { const i = Math.floor(l), f = l - i; return i + 1 <= maxLag + 1 ? ac[i] * (1 - f) + ac[i + 1] * f : 0; };
-  // Score each beat length (60 to 180 BPM): it should match at 1, 2 and 4 beats, and songs are usually near 115 BPM.
+  // best match near a spot (small rounding adds up over several beats, so allow a little room)
+  const Am = (c, w) => { if (c + w > maxLag) return 0; let m = A(c); for (let i = Math.ceil(c - w); i <= c + w; i++) if (ac[i] > m) m = ac[i]; return m; };
+  // Score each beat length (60 to 180 BPM): it should match at 1, 2, 4 and 8 beats (a whole bar or two),
+  // and songs are usually near 115 BPM.
   let best = 0, bestS = 0, sum = 0, cnt = 0;
-  for (let lag = Math.ceil(60 / 180 / dt); lag <= Math.floor(60 / 60 / dt); lag++) {
-    let s = A(lag) + 0.6 * A(2 * lag) + 0.35 * A(lag / 2) + (4 * lag <= maxLag ? 0.5 * A(4 * lag) : 0);
+  for (let lag = 60 / 180 / dt; lag <= 60 / 60 / dt; lag += 0.25) {
+    let s = Am(lag, 0.5) + 0.6 * Am(2 * lag, 1) + 0.35 * Am(lag / 2, 0.5) + Am(4 * lag, 1.5) + 0.5 * Am(8 * lag, 2.5);
     const bpm = 60 / (lag * dt);
     s *= Math.exp(-0.5 * Math.pow(Math.log2(bpm / 115) / 0.75, 2));
     sum += s; cnt++;
     if (s > bestS) { bestS = s; best = lag; }
   }
   if (!best) return;
-  // fine-tune the beat length between two hops
-  const sc = l => A(l) + 0.6 * A(2 * l);
-  const s0 = sc(best - 1), s1 = sc(best), s2 = sc(best + 1), den = s0 - 2 * s1 + s2;
-  const lagF = best + (den < 0 ? Math.max(-0.5, Math.min(0.5, 0.5 * (s0 - s2) / den)) : 0);
+  const lagF = best;
   beat.sure = bestS / (sum / cnt + 1e-9);
   const period = lagF * dt;
   // Where do the beats land? Try every starting point; recent beats count more.
@@ -454,7 +460,7 @@ function resetBeat() { beat.period = 0; beat.sure = 0; beat.changes = 0; hopN = 
 function tempoChanged() {
   if (!G || G.mode !== 'listen') return;
   const t = now();
-  G.notes = G.notes.filter(n => n.done || n.t - t < 0.35);   // keep the ones almost here
+  G.notes = G.notes.filter(n => n.done || n.word || n.t - t < 0.35);   // keep the ones almost here, and the word circles
   G.nextBeat = 0;
 }
 // How loud the music has been lately compared to the whole song (quiet parts get fewer circles).
@@ -469,14 +475,44 @@ $('file').onchange = async () => {
   ensureCtx();
   try { audioBuf = await actx.decodeAudioData(await f.arrayBuffer()); }
   catch { $('addMsg').textContent = "That file didn't work. Try an MP3."; return; }
+  await new Promise(r => setTimeout(r, 30));   // let "Finding the beats..." show first
   fileOnsets = fileBeats(audioBuf);
+  fileGrid = fileBeatGrid(audioBuf);
   $('addMsg').textContent = '';
   G_fileName = f.name.replace(/\.[^.]+$/, '');
   G_level = null;
   newGame('file', null);
   $('file').value = '';
 };
-let G_fileName = '', G_level = null;
+let G_fileName = '', G_level = null, fileGrid = [];
+// Runs the whole song through the same beat finder used for Spotify, so the circles land on its real beats.
+function fileBeatGrid(buf) {
+  const a = buf.getChannelData(0), b = buf.numberOfChannels > 1 ? buf.getChannelData(1) : a, sr = buf.sampleRate;
+  const core = new OnsetCore(sr), step = Math.round(sr * 0.25), ests = [];
+  const saved = { hopN, prevL, prevH, curLoud, period: beat.period, last: beat.last, sure: beat.sure, changes: beat.changes };
+  const savedG = G; G = null;   // don't disturb a game while doing this
+  hopN = 0; prevL = prevH = 0; beat.period = 0; beat.sure = 0; beat.changes = 0;
+  for (let i = 0; i < a.length; i++) {
+    const r = core.push((a[i] + b[i]) * 0.5, i); if (r) onHop(r);
+    if (i % step || i < sr * 3) continue;
+    findBeat();
+    if (beat.period && beat.sure >= 3) ests.push({ t: i / sr, p: beat.period, last: beat.last });
+  }
+  // Each beat uses what the beat finder knew a few seconds LATER (it has heard the beats around it by then).
+  const beats = [];
+  let prev = -1e9, ei = 0;
+  while (ests.length) {
+    while (ei < ests.length - 1 && ests[ei].t < Math.max(0, prev) + 4) ei++;
+    const E = ests[ei], from = Math.max(prev + E.p * 0.6, 0);
+    const bt = E.last - Math.floor((E.last - from) / E.p) * E.p;
+    if (bt >= buf.duration - 0.3) break;
+    beats.push(bt); prev = bt;
+  }
+  hopN = saved.hopN; prevL = saved.prevL; prevH = saved.prevH; curLoud = saved.curLoud;
+  Object.assign(beat, { period: saved.period, last: saved.last, sure: saved.sure, changes: saved.changes });
+  G = savedG;
+  return beats;
+}
 function fileBeats(buf) {
   const data = buf.getChannelData(0), rate = buf.sampleRate, hop = 512, energy = [];
   let lp = 0;
@@ -519,7 +555,7 @@ function newGame(mode, id) {
   const name = mode === 'file' ? G_fileName : id ? (info[id]?.t || 'Spotify song') : 'Spotify';
   G = { mode, id, name, notes: [], pops: [], score: 0, combo: 0, maxCombo: 0, hits: { perfect: 0, good: 0, ok: 0, miss: 0 },
         lastPos: { x: W / 2, y: H / 2 }, over: false, flash: 0, beatCount: 0, nextBeat: 0,
-        heardAt: 0, quietSince: 0, fileIdx: 0 };
+        heardAt: 0, quietSince: 0, fileIdx: 0, startedAt: actx ? actx.currentTime - 0.5 : 0 };
   $('songName').textContent = name;
   updateHud();
   // Get the song's words.
@@ -538,7 +574,20 @@ function newGame(mode, id) {
     if (fileSrc) { fileSrc.onended = null; try { fileSrc.stop(); } catch {} }
     G.level = G_level;
     if (G.level) G.fileNotes = G.level.notes.map(n => n.t);   // a level someone made: their circles, their spots
-    else {
+    else if (fileGrid.length > 8) {
+      // On the song's beats (Easy: every other beat). Hard and Insane also get the in-between hits the song really has.
+      const notes = [];
+      fileGrid.forEach((t, i) => {
+        if (t >= 1.5 && (diff !== 'easy' || i % 2 === 0)) notes.push(t);
+        const nx = fileGrid[i + 1];
+        if ((diff === 'hard' || diff === 'insane') && nx && nx - t > 0.32) {
+          const half = (t + nx) / 2;
+          if (fileOnsets.some(o => Math.abs(o - half) < 0.04)) notes.push(half);
+        }
+      });
+      G.fileNotes = notes.filter(t => t >= 1.5);
+    } else {
+      // No steady beat found: use the song's hits instead.
       let last = -9; const gap = LEVELS[diff].gap;
       G.fileNotes = fileOnsets.filter(t => { if (t < 1.5 || t - last < gap) return false; last = t; return true; });
     }
@@ -853,7 +902,7 @@ function loop() {
   // On the song list but still connected: start playing as soon as a new song comes on.
   if (!G && stream && analyser && $('library').classList.contains('show')) {
     const at = actx.currentTime, loud = listenFrame(at);
-    if (loud <= 6) { libQuiet = true; libLoudAt = 0; }
+    if (loud <= LOUD) { libQuiet = true; libLoudAt = 0; }
     else if (libQuiet) { if (!libLoudAt) libLoudAt = at; if (at - libLoudAt > 1) { libQuiet = false; libLoudAt = 0; newGame('listen', null); return; } }
   }
   if (!G || !$('game').classList.contains('show')) return;
@@ -863,16 +912,16 @@ function loop() {
   // (after Esc or Back it waits for a quiet moment first, so it doesn't jump right back in).
   if (G.mode === 'listen' && G.over && stream) {
     const at = actx.currentTime, loud = listenFrame(at);
-    if (loud <= 6) { G.againAt = 0; G.byHand = false; }
+    if (loud <= LOUD) { G.againAt = 0; G.byHand = false; }
     else if (!G.byHand) { if (!G.againAt) G.againAt = at; if (at - G.againAt > 1) { newGame('listen', null); return; } }
   }
   if (G.mode === 'listen' && !G.over) {
     const at = actx.currentTime;
     const loud = listenFrame(at);
-    if (loud > 6) {
+    if (loud > LOUD) {
       // Music came back after a short quiet gap = probably the next song. Listen fresh for its speed.
-      if (G.quietSince && at - G.quietSince > 1) { resetBeat(); loudSong = 0; G.heardAt = at; G.lyr = null; $('lyrBtn').style.display = 'none'; }
-      if (!G.heardAt) G.heardAt = at; G.quietSince = 0;
+      if (G.quietSince && at - G.quietSince > 1) { resetBeat(); loudSong = 0; G.heardAt = loudStartT >= G.quietSince - 0.5 ? loudStartT : at; G.lyr = null; $('lyrBtn').style.display = 'none'; }
+      if (!G.heardAt) G.heardAt = loudStartT >= G.startedAt ? loudStartT : at; G.quietSince = 0;
       loudAvg += (loud - loudAvg) * 0.03;                     // last ~half second
       loudSong += (loud - loudSong) * (loudSong ? 0.002 : 1); // whole song so far
     }
