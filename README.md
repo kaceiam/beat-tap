@@ -1,16 +1,25 @@
 ﻿# Beat Tap
 
-A rhythm game you play in your browser with your Spotify Liked Songs.
+A rhythm game you play in your browser along with songs from your Spotify app.
+Play it at https://kaceiam.github.io/beat-tap/
 
-- **Blue circles:** they fly at you from far away. Click each one with your mouse when it reaches full size.
+- **Circles fly at you** on the beat. Move your mouse inside each one as it reaches you. No clicking.
+- **Blue circles** are the beat. **Pink circles** come when the singer sings, with the word on them.
+- The song's words show at the bottom of the screen.
+- Levels: Easy, Medium, Hard and Insane.
 
-## Adding your songs
-1. Open the Spotify app and go to **Liked Songs**.
-2. Click one song, press **Ctrl+A**, then **Ctrl+C**.
-3. Paste into the box in the game. Use the search bar to find a song.
+## Playing with Spotify
+1. Add your songs: in the Spotify app open **Liked Songs**, click one song, press **Ctrl+A**, then
+   **Ctrl+C**, and paste into the game. You can also drag songs from Spotify onto the game.
+2. Click a song (or **Play with whatever Spotify is playing**).
+3. A box pops up. Pick **Entire screen**, turn on **Also share system audio**, and click **Share**.
+   The game only listens to the sound.
+4. Press play in Spotify. After about 3 seconds the game has found the beat and the circles start.
 
-Spotify doesn't tell other apps where a song's beats are. While a song plays, tap **T** along
-with the beat 4 or more times and the notes lock onto it. The game remembers it for next time.
-Or click **Play my own music file** to load an MP3. The game finds the beats in it by itself.
+Start songs from 0:00 so the words line up. If the circles feel early or late, press **←** or **→**
+while you play.
 
-Stay logged into Spotify in the same browser, or you only get 30 seconds of each song.
+## Other ways to play
+- **Play a music file instead:** pick an MP3 and the game finds its beats by itself.
+- **Make your own level:** pick a music file and click where each circle should go. You can send
+  the level to a friend.
