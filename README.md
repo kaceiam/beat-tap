@@ -20,6 +20,8 @@ Start songs from 0:00 so the words line up. If the circles feel early or late, p
 while you play.
 
 ## Other ways to play
+- **Starter levels:** three beats made by the game itself (Chill Bounce, Neon Run, Turbo Rush).
+  No Spotify or music file needed.
 - **Play a music file instead:** pick an MP3 and the game finds its beats by itself.
 - **Make your own level:** pick a music file and click where each circle should go. You can send
   the level to a friend.
