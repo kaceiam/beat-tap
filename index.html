@@ -153,7 +153,7 @@
       <button class="go" id="mkDone">✓ Done</button>
     </div>
   </div>
-  <div id="mkHelp">Click where you want a circle, right on the beat 🎵 &nbsp;·&nbsp; <span class="key">Esc</span> done</div>
+  <div id="mkHelp">Click where you want a circle, right on the beat 🎵 &nbsp;·&nbsp; Right-click a circle to take it out &nbsp;·&nbsp; <span class="key">Esc</span> done</div>
 </div>
 
 <div class="overlay" id="mkSave">
@@ -568,7 +568,7 @@ function newGame(mode, id) {
   G.lyrKey = mode === 'file' ? 'file:' + G_fileName : id;
   if ((mode === 'listen' && id && info[id]?.t) || (mode === 'file' && !G_level && G_fileName)) {
     const game = G;
-    loadLyrics(G.lyrKey, mode === 'file' ? G_fileName : info[id].t, mode === 'file').then(c => {
+    loadLyrics(G.lyrKey, mode === "file" ? G_fileName : info[id].t, mode === "file", mode === "file" && audioBuf ? audioBuf.duration : 0).then(c => {
       if (G !== game || !c.length) return;
       G.lyrChoices = c; G.lyrPick = (lyrPick[G.lyrKey] || 0) % c.length; setLyr();
     }).catch(() => {});
@@ -616,7 +616,7 @@ function now() {
 // so we pick the version most people uploaded. "Wrong words?" tries the next one.
 const lyrCache = {};
 let lyrPick = store.get('lyrPick', {});
-async function loadLyrics(key, title, isFile) {
+async function loadLyrics(key, title, isFile, dur) {
   if (lyrCache[key]) return lyrCache[key];
   const clean = title.replace(/\s*[\(\[].*?[\)\]]/g, '').replace(/\s+-\s+(feat|with|remaster).*$/i, '').trim();
   const url = 'https://lrclib.net/api/search?' + (isFile ? 'q=' : 'track_name=') + encodeURIComponent(clean);
@@ -624,6 +624,8 @@ async function loadLyrics(key, title, isFile) {
   const count = {};
   for (const x of list) { const a = x.artistName.toLowerCase(); count[a] = (count[a] || 0) + 1; }
   list.sort((a, b) => count[b.artistName.toLowerCase()] - count[a.artistName.toLowerCase()]);
+  // When we know how long the song is (music files), the version with the same length is the right one.
+  if (dur) list.sort((a, b) => (Math.abs(a.duration - dur) > 3) - (Math.abs(b.duration - dur) > 3));
   const seen = new Set(), picks = [];
   for (const x of list) { const a = x.artistName.toLowerCase(); if (!seen.has(a)) { seen.add(a); picks.push(x); } }
   return lyrCache[key] = picks.slice(0, 8).map(x => ({ artist: x.artistName, lines: parseLrc(x.syncedLyrics) })).filter(c => c.lines.length);
@@ -1055,12 +1057,12 @@ $('mkFile').onchange = async () => {
   try { buf = await actx.decodeAudioData(bytes.slice(0)); }
   catch { $('mkMsg').textContent = "That file didn't work. Try an MP3."; return; }
   $('mkMsg').textContent = '';
-  MK = { bytes, type: f.type || 'audio/mpeg', fileName: f.name, name: f.name.replace(/\.[^.]+$/, ''), buf, notes: [] };
+  MK = { bytes, type: f.type || 'audio/mpeg', fileName: f.name, name: f.name.replace(/\.[^.]+$/, ''), buf, notes: [], base: [] };
   startMaker();
 };
 function startMaker() {
   mkStop();
-  MK.notes = []; MK.over = false;
+  MK.notes = []; MK.removed = new Set(); MK.over = false;
   MK.src = actx.createBufferSource(); MK.src.buffer = MK.buf; MK.src.connect(actx.destination);
   MK.start = actx.currentTime + 1; MK.src.start(MK.start);
   MK.src.onended = () => endMaker();
@@ -1071,6 +1073,23 @@ function startMaker() {
 function mkStop() { if (MK && MK.src) { MK.src.onended = null; try { MK.src.stop(); } catch {} MK.src = null; } }
 function mkTime() { return actx.currentTime - MK.start; }
 function mkUndo() { if (MK && MK.notes.length) MK.notes.pop(); }
+// Every circle in the level: the saved ones (when fixing a level) minus the ones you took out, plus the new ones.
+function mkAll() { return [...MK.base.filter(n => !MK.removed.has(n)), ...MK.notes].sort((a, b) => a.t - b.t); }
+// Right-click a circle on screen to take it out.
+mkcv.addEventListener('contextmenu', e => {
+  e.preventDefault();
+  if (!MK || MK.over) return;
+  const t = mkTime(), b = midBox(), r = LEVELS[diff].radius;
+  let pick = null, bestD = 1e9;
+  for (const n of mkAll()) {
+    if (n.t - t > 0.5 || t - n.t > 0.7) continue;
+    const d = Math.hypot(b.cx + n.x * b.hx - e.clientX, b.cy + n.y * b.hy - e.clientY);
+    if (d < r * 1.2 && d < bestD) { bestD = d; pick = n; }
+  }
+  if (!pick) return;
+  const i = MK.notes.indexOf(pick);
+  if (i >= 0) MK.notes.splice(i, 1); else MK.removed.add(pick);
+});
 mkcv.addEventListener('mousemove', e => { mkMouse.x = e.clientX; mkMouse.y = e.clientY; });
 mkcv.addEventListener('mousedown', e => {
   if (!MK || MK.over) return;
@@ -1086,8 +1105,8 @@ $('mkDone').onclick = () => endMaker();
 function endMaker() {
   if (!MK || MK.over) return;
   MK.over = true; mkStop();
-  const n = MK.notes.length;
-  $('mkCount').textContent = n ? `You made ${n} circle${n > 1 ? 's' : ''}! Give your level a name:` : "You didn't add any circles yet. Press Try again and click on the beat.";
+  const n = mkAll().length;
+  $('mkCount').textContent = n ? MK.editId ? `Your level has ${n} circle${n > 1 ? 's' : ''} now.` : `You made ${n} circle${n > 1 ? 's' : ''}! Give your level a name:` : "You didn't add any circles yet. Press Try again and click on the beat.";
   $('mkSaveBtn').disabled = !n; $('mkSaveBtn').style.opacity = n ? 1 : 0.4;
   $('mkName').value = MK.name;
   $('mkSave').classList.add('show');
@@ -1096,9 +1115,9 @@ function endMaker() {
 $('mkAgain').onclick = () => startMaker();
 $('mkToss').onclick = () => { MK = null; $('mkSave').classList.remove('show'); show('library'); };
 $('mkSaveBtn').onclick = async () => {
-  if (!MK || !MK.notes.length) return;
-  const lv = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: ($('mkName').value.trim() || MK.name).slice(0, 60),
-               notes: MK.notes, audio: MK.bytes, type: MK.type, fileName: MK.fileName, made: Date.now() };
+  const all = MK && mkAll(); if (!all || !all.length) return;
+  const lv = { id: MK.editId || Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: ($('mkName').value.trim() || MK.name).slice(0, 60),
+               notes: all, audio: MK.bytes, type: MK.type, fileName: MK.fileName, made: MK.made || Date.now() };
   try { await idb.put(lv); } catch { $('mkCount').textContent = "Couldn't save it. The song file might be too big."; return; }
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
   MK = null; $('mkSave').classList.remove('show'); show('library'); drawLevels();
@@ -1110,9 +1129,14 @@ function drawMaker() {
   // the middle box: circles can only go in here
   mg.setLineDash([10, 10]); mg.strokeStyle = '#3a3366'; mg.lineWidth = 2;
   mg.strokeRect(b.cx - b.hx, b.cy - b.hy, b.hx * 2, b.hy * 2); mg.setLineDash([]);
-  // circles you just placed fade away
-  for (const n of MK.notes) {
-    const d = t - n.t; if (d < 0 || d > 0.7) continue;
+  // circles show up just before their beat (as a ring) and fade away after it
+  const all = mkAll();
+  for (const n of all) {
+    const d = t - n.t; if (d < -0.5 || d > 0.7) continue;
+    if (d < 0) {
+      mg.globalAlpha = (1 + d / 0.5) * 0.6; mg.strokeStyle = '#3dd6ff'; mg.lineWidth = 3;
+      mg.beginPath(); mg.arc(b.cx + n.x * b.hx, b.cy + n.y * b.hy, r, 0, 7); mg.stroke(); continue;
+    }
     const x = b.cx + n.x * b.hx, y = b.cy + n.y * b.hy, k = d / 0.7;
     mg.globalAlpha = 1 - k;
     mg.fillStyle = '#3dd6ff'; mg.beginPath(); mg.arc(x, y, r * (1 + k * 0.3), 0, 7); mg.fill();
@@ -1130,10 +1154,10 @@ function drawMaker() {
   mg.fillStyle = '#2b2550'; mg.fillRect(bx, by, bw, 8);
   mg.fillStyle = '#ff3d8b'; mg.fillRect(bx, by, bw * Math.max(0, Math.min(1, t / dur)), 8);
   mg.fillStyle = '#3dd6ff';
-  for (const n of MK.notes) mg.fillRect(bx + bw * n.t / dur - 1, by - 6, 2, 6);
+  for (const n of all) mg.fillRect(bx + bw * n.t / dur - 1, by - 6, 2, 6);
   if (t < 0) { mg.fillStyle = '#fff'; mg.font = 'bold 40px system-ui'; mg.textAlign = 'center'; mg.fillText('Get ready...', W / 2, H * 0.5); }
   const time = s => Math.floor(Math.max(0, s) / 60) + ':' + String(Math.floor(Math.max(0, s) % 60)).padStart(2, '0');
-  $('mkInfo').textContent = `${time(t)} / ${time(dur)}  ·  ${MK.notes.length} circles`;
+  $('mkInfo').textContent = `${time(t)} / ${time(dur)}  ·  ${all.length} circles`;
 }
 
 async function playLevel(id) {
@@ -1145,6 +1169,17 @@ async function playLevel(id) {
   $('mkMsg').textContent = '';
   G_level = lv; G_fileName = lv.name;
   newGame('file', 'lv:' + lv.id);
+}
+async function editLevel(id) {
+  const lv = await idb.get(id); if (!lv) return;
+  mkMsg.textContent = 'Loading...';
+  ensureCtx();
+  let buf;
+  try { buf = await actx.decodeAudioData(lv.audio.slice(0)); }
+  catch { mkMsg.textContent = "That level's song didn't load."; return; }
+  mkMsg.textContent = '';
+  MK = { bytes: lv.audio, type: lv.type, fileName: lv.fileName, name: lv.name, buf, notes: [], base: lv.notes.slice(), editId: lv.id, made: lv.made };
+  startMaker();
 }
 async function drawLevels() {
   let list = [];
@@ -1165,7 +1200,9 @@ async function drawLevels() {
     share.onclick = e => { e.stopPropagation(); exportLevel(lv); };
     const del = document.createElement('button'); del.textContent = '🗑'; del.title = 'Delete this level';
     del.onclick = async e => { e.stopPropagation(); if (confirm(`Delete "${lv.name}"?`)) { await idb.del(lv.id); drawLevels(); } };
-    x.append(share, del);
+    const edit = document.createElement('button'); edit.textContent = '✏️'; edit.title = 'Fix this level: add or take out circles';
+    edit.onclick = e => { e.stopPropagation(); editLevel(lv.id); };
+    x.append(edit, share, del);
     el.append(pic, txt, x);
     el.onclick = () => playLevel(lv.id);
     box.append(el);
