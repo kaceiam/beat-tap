@@ -196,6 +196,10 @@
     <h2>Save your level 💾</h2>
     <p class="hint" id="mkCount"></p>
     <input id="mkName" maxlength="60" style="width:100%;font-size:18px" placeholder="Level name">
+    <div class="row" style="margin:10px 0 0">
+      <input id="mkSong" maxlength="80" style="flex:1;min-width:0" placeholder="Song name (and singer)">
+      <input id="mkBy" maxlength="40" style="flex:1;min-width:0" placeholder="Made by (your name)">
+    </div>
     <div class="row" style="justify-content:center;margin-top:14px">
       <button class="go" id="mkSavePlay">▶ Save &amp; play</button>
       <button id="mkSaveBtn">Save it</button>
@@ -1198,6 +1202,8 @@ function endMaker() {
   $('mkCount').textContent = n ? MK.editId ? `Your level has ${n} circle${n > 1 ? 's' : ''} now.` : `You made ${n} circle${n > 1 ? 's' : ''}! Give your level a name:` : "You didn't add any circles yet. Press Try again and click on the beat.";
   for (const id of ['mkSaveBtn', 'mkSavePlay']) { $(id).disabled = !n; $(id).style.opacity = n ? 1 : 0.4; }
   $('mkName').value = MK.name;
+  $('mkSong').value = MK.song || MK.fileName.replace(/\.[^.]+$/, '');
+  $('mkBy').value = MK.by || store.get('creator', '');
   $('mkSave').classList.add('show');
   if (n) setTimeout(() => $('mkName').select(), 50);
 }
@@ -1208,7 +1214,9 @@ $('mkSavePlay').onclick = () => saveLevel(true);
 async function saveLevel(thenPlay) {
   const all = MK && mkAll(); if (!all || !all.length) return;
   const lv = { id: MK.editId || Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: ($('mkName').value.trim() || MK.name).slice(0, 60),
-               notes: all, audio: MK.bytes, type: MK.type, fileName: MK.fileName, made: MK.made || Date.now() };
+               notes: all, audio: MK.bytes, type: MK.type, fileName: MK.fileName, made: MK.made || Date.now(),
+               song: $('mkSong').value.trim().slice(0, 80), by: $('mkBy').value.trim().slice(0, 40) };
+  if (lv.by) store.set('creator', lv.by);   // remember your name for next time
   try { await idb.put(lv); } catch { $('mkCount').textContent = "Couldn't save it. The song file might be too big."; return; }
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
   MK = null; $('mkSave').classList.remove('show'); show('library'); drawLevels();
@@ -1273,7 +1281,7 @@ async function editLevel(id) {
   await new Promise(r => setTimeout(r, 30));
   const grid = fileBeatGrid(buf);
   $('mkMsg').textContent = '';
-  MK = { grid, bytes: lv.audio, type: lv.type, fileName: lv.fileName, name: lv.name, buf, notes: [], base: lv.notes.slice(), editId: lv.id, made: lv.made };
+  MK = { grid, bytes: lv.audio, type: lv.type, fileName: lv.fileName, name: lv.name, song: lv.song, by: lv.by, buf, notes: [], base: lv.notes.slice(), editId: lv.id, made: lv.made };
   startMaker();
 }
 async function drawLevels() {
@@ -1288,7 +1296,7 @@ async function drawLevels() {
     const txt = document.createElement('div'); txt.style.minWidth = '0';
     const t = document.createElement('div'); t.className = 't'; t.textContent = lv.name;
     const sc = best['lv:' + lv.id + diff];
-    const s = document.createElement('div'); s.className = 'b'; s.textContent = `${lv.notes.length} circles` + (sc ? ` · best ${sc.toLocaleString()}` : '');
+    const s = document.createElement('div'); s.className = 'b'; s.textContent = [lv.song, lv.by && 'by ' + lv.by].filter(Boolean).join(' · ') + (lv.song || lv.by ? ' · ' : '') + `${lv.notes.length} circle${lv.notes.length === 1 ? '' : 's'}` + (sc ? ` · best ${sc.toLocaleString()}` : '');
     txt.append(t, s);
     const x = document.createElement('div'); x.className = 'x';
     const share = document.createElement('button'); share.textContent = '📤'; share.title = 'Save a file you can send to a friend';
@@ -1308,7 +1316,7 @@ document.querySelectorAll('[data-diff]').forEach(b => b.addEventListener('click'
 // Send a level to a friend: one file with the circles and the song inside.
 async function exportLevel(lv) {
   const audio = await new Promise(res => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(new Blob([lv.audio], { type: lv.type || 'audio/mpeg' })); });
-  const json = JSON.stringify({ beatTapLevel: 1, name: lv.name, fileName: lv.fileName, notes: lv.notes, audio });
+  const json = JSON.stringify({ beatTapLevel: 1, name: lv.name, song: lv.song || '', by: lv.by || '', fileName: lv.fileName, notes: lv.notes, audio });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
   a.download = (lv.name.replace(/[^\w\- ]+/g, '').trim() || 'level') + '.beattap.json';
@@ -1330,7 +1338,8 @@ $('lvFile').onchange = async () => {
     const bin = atob(b64), arr = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
     await idb.put({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: String(o.name || 'Level').slice(0, 60),
-                    notes, audio: arr.buffer, type, fileName: String(o.fileName || ''), made: Date.now() });
+                    notes, audio: arr.buffer, type, fileName: String(o.fileName || ''), made: Date.now(),
+                    song: String(o.song || '').slice(0, 80), by: String(o.by || '').slice(0, 40) });
     $('mkMsg').textContent = 'Level added! ✅';
     drawLevels();
   } catch { $('mkMsg').textContent = "That isn't a Beat Tap level file."; }
