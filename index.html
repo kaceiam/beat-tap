@@ -86,7 +86,7 @@
       <button data-diff="insane">🔥 Insane</button>
     </div>
 
-    <div id="drop">🎵 <b>Drag songs from the Spotify app and drop them here.</b> They stay in the game forever.</div>
+    <div id="drop">🎵 <b>Drag songs from the Spotify app and drop them here.</b> They stay in the game forever.<br><span style="font-size:14px">You can drop a music file or a friend's level file here too.</span></div>
 
     <div class="songs" id="songs"></div>
 
@@ -233,6 +233,15 @@ $('library').addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragD
 $('library').addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
 $('library').addEventListener('drop', e => {
   e.preventDefault(); dragDepth = 0; document.body.classList.remove('dragging');
+  // A file from the computer: a song plays right away, a level file from a friend gets added.
+  const f = e.dataTransfer.files && e.dataTransfer.files[0];
+  if (f) {
+    const dt = new DataTransfer(); dt.items.add(f);
+    const input = /\.json$/i.test(f.name) ? 'lvFile' : f.type.startsWith('audio/') || /\.(mp3|wav|ogg|m4a|flac|aac)$/i.test(f.name) ? 'file' : '';
+    if (input) { $(input).files = dt.files; $(input).onchange(); }
+    else $('addMsg').textContent = "That file isn't a song. Try an MP3.";
+    return;
+  }
   const text = ['text/uri-list', 'text/plain', 'text/html'].map(k => e.dataTransfer.getData(k) || '').join('\n');
   if (/playlist|album/.test(text) && !/track/.test(text)) { $('addMsg').textContent = 'That was a playlist. Open it, pick the songs (Ctrl+A) and drag them in.'; $('drop').scrollIntoView({ block: 'center' }); return; }
   addSongs(text);
