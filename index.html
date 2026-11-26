@@ -163,7 +163,8 @@
     <p class="hint" id="mkCount"></p>
     <input id="mkName" maxlength="60" style="width:100%;font-size:18px" placeholder="Level name">
     <div class="row" style="justify-content:center;margin-top:14px">
-      <button class="go" id="mkSaveBtn">Save it</button>
+      <button class="go" id="mkSavePlay">▶ Save &amp; play</button>
+      <button id="mkSaveBtn">Save it</button>
       <button id="mkAgain">Try again</button>
       <button id="mkToss">Throw it away</button>
     </div>
@@ -1129,14 +1130,16 @@ function endMaker() {
   MK.over = true; mkStop();
   const n = mkAll().length;
   $('mkCount').textContent = n ? MK.editId ? `Your level has ${n} circle${n > 1 ? 's' : ''} now.` : `You made ${n} circle${n > 1 ? 's' : ''}! Give your level a name:` : "You didn't add any circles yet. Press Try again and click on the beat.";
-  $('mkSaveBtn').disabled = !n; $('mkSaveBtn').style.opacity = n ? 1 : 0.4;
+  for (const id of ['mkSaveBtn', 'mkSavePlay']) { $(id).disabled = !n; $(id).style.opacity = n ? 1 : 0.4; }
   $('mkName').value = MK.name;
   $('mkSave').classList.add('show');
   if (n) setTimeout(() => $('mkName').select(), 50);
 }
 $('mkAgain').onclick = () => startMaker();
 $('mkToss').onclick = () => { MK = null; $('mkSave').classList.remove('show'); show('library'); };
-$('mkSaveBtn').onclick = async () => {
+$('mkSaveBtn').onclick = () => saveLevel(false);
+$('mkSavePlay').onclick = () => saveLevel(true);
+async function saveLevel(thenPlay) {
   const all = MK && mkAll(); if (!all || !all.length) return;
   const lv = { id: MK.editId || Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: ($('mkName').value.trim() || MK.name).slice(0, 60),
                notes: all, audio: MK.bytes, type: MK.type, fileName: MK.fileName, made: MK.made || Date.now() };
@@ -1144,7 +1147,8 @@ $('mkSaveBtn').onclick = async () => {
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
   MK = null; $('mkSave').classList.remove('show'); show('library'); drawLevels();
   $('mkMsg').textContent = 'Saved! ✅';
-};
+  if (thenPlay) await playLevel(lv.id);
+}
 function drawMaker() {
   const t = mkTime(), b = midBox(), r = LEVELS[diff].radius, dur = MK.buf.duration;
   mg.fillStyle = '#0d0b1a'; mg.fillRect(0, 0, W, H);
