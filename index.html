@@ -835,6 +835,8 @@ function touchNotes(t) {
 addEventListener('keydown', e => {
   if (e.code === 'Space' && $('game').classList.contains('show')) e.preventDefault();
   if (e.code === 'Escape' && G && !G.over && $('game').classList.contains('show')) { G.byHand = true; finish(); }
+  if (e.code === 'Escape' && $('howTo').classList.contains('show')) closeHow();
+  if (e.code === 'Escape' && $('shareHelp').classList.contains('show')) $('shareHelp').classList.remove('show');
   if ((e.code === "ArrowLeft" || e.code === "ArrowRight") && G && $("game").classList.contains("show")) {
     syncMs += e.code === "ArrowRight" ? 10 : -10; store.set("sync2", syncMs); showSync();
     popText(W / 2, 110, "Timing: " + (syncMs > 0 ? "+" : "") + syncMs + " ms", "#b9b3dd");
