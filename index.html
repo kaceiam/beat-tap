@@ -1714,6 +1714,7 @@ const STARTERS = [
   { key: 'boss', name: 'Boss Fight', emoji: '👹', bpm: 140, bars: 40, hats: 16, style: 'boss' },
   { key: "dembow", name: "Dembow Fiesta", emoji: "💃", bpm: 96, bars: 32, hats: 8, style: "dembow" },
   { key: "dnb", name: "Jungle Dash", emoji: "🐆", bpm: 172, bars: 48, hats: 16, style: "dnb" },
+  { key: "chip", name: "Pixel Quest", emoji: "🕹️", bpm: 128, bars: 36, hats: 16, style: "chip" },
 ];
 // Boss Fight's tricky rhythm, in 16th notes of each bar (a 3-3-2 kick pattern). Snare rolls every 4th bar.
 const BOSS_KICK = [0, 3, 6, 10, 12];
@@ -1725,6 +1726,9 @@ const DEMBOW_NOTES = { easy: [0, 8], normal: [0, 4, 8, 12], hard: [0, 4, 6, 8, 1
 // Circles follow the kick and snare, not every fast hi-hat.
 const DNB_KICK = [0, 10], DNB_GHOST = [7, 14];
 const DNB_NOTES = { easy: [4, 12], normal: [0, 4, 12], hard: [0, 4, 10, 12], insane: [0, 4, 7, 10, 12, 14] };
+// Pixel Quest (old video game sound): a beepy square-wave tune with a jumpy rhythm, circles on the tune's notes.
+const CHIP_KICK = [0, 6, 8], CHIP_NOTES = { easy: [0, 8], normal: [0, 6, 8, 12], hard: [0, 3, 6, 8, 12, 14], insane: [0, 2, 3, 6, 8, 10, 12, 14] };
+const STYLE_NOTES = { dnb: DNB_NOTES, dembow: DEMBOW_NOTES, chip: CHIP_NOTES };
 const starterBufs = {};
 async function renderStarter(st) {
   if (starterBufs[st.key]) return starterBufs[st.key];
@@ -1733,13 +1737,15 @@ async function renderStarter(st) {
   let seed = 12345; const noise = () => (seed = (seed * 16807) % 2147483647) / 1073741823.5 - 1;
   const add = (t, dur, fn) => { const s0 = Math.round(t * sr), n = Math.min(Math.round(dur * sr), out.length - s0); for (let i = 0; i < n; i++) out[s0 + i] += fn(i / sr, i); };
   const kick = t => { let ph = 0; add(t, 0.35, n => { ph += 2 * Math.PI * (45 + 105 * Math.exp(-n / 0.03)) / sr; return Math.sin(ph) * Math.exp(-n / 0.09) * 0.9; }); };
-  const lofi = st.style === "lofi", boss = st.style === "boss", dembow = st.style === "dembow", dnb = st.style === "dnb", s16 = beat / 4;
+  const lofi = st.style === "lofi", boss = st.style === "boss", dembow = st.style === "dembow", dnb = st.style === "dnb", chip = st.style === "chip", s16 = beat / 4;
   const snare = (t, loud = 1) => { let prev = 0; add(t, 0.2, n => { const x = noise(), hp = x - prev; prev = x; return (hp * Math.exp(-n / 0.045) * 0.3 + Math.sin(2 * Math.PI * 190 * n) * Math.exp(-n / 0.03) * 0.3) * loud; }); };
   const hat = (t, loud, fall) => { let prev = 0; add(t, fall * 5, n => { const x = noise(), hp = x - prev; prev = x; return hp * Math.exp(-n / fall) * loud; }); };
-  const bass = (t, f, dur) => { let lp = 0; add(t, dur, n => { const saw = 2 * ((f * n) % 1) - 1; lp += (lofi ? 0.04 : boss ? 0.22 : dnb ? 0.05 : 0.12) * (saw - lp); return lp * Math.min(1, n / 0.005) * Math.exp(-n / (dur * 1.5)) * 0.35; }); };
+  const bass = (t, f, dur) => { let lp = 0; add(t, dur, n => { const saw = 2 * ((f * n) % 1) - 1; lp += (lofi ? 0.04 : boss ? 0.22 : dnb ? 0.05 : 0.12) * (saw - lp); if (chip) { const tri = 1 - 4 * Math.abs(((f * n) % 1) - 0.5); return tri * (n < dur * 0.8 ? 0.4 : 0); } return lp * Math.min(1, n / 0.005) * Math.exp(-n / (dur * 1.5)) * 0.35; }); };
+  const beep = (t, f, dur, loud) => add(t, dur, n => ((f * n) % 1 < 0.25 ? 1 : -1) * loud * (n < dur * 0.85 ? 1 : 0));   // square wave, like old game consoles
+  const crunch = (t, dur, loud) => { let v = 0; add(t, dur, (n, i) => { if (i % 6 === 0) v = noise(); return v * loud * Math.exp(-n / (dur * 0.3)); }); };   // chunky game noise
   const pluck = (t, f, dur) => { let lp = 0; add(t, dur, n => { const sq = (f * n) % 1 < 0.5 ? 1 : -1; lp += 0.35 * (sq - lp); return lp * Math.exp(-n / (dur * 0.4)) * 0.07; }); };
   // Am - F - C - G, one chord per bar (lo-fi: soft jazzy chords, boss: dark D minor)
-  const roots = lofi ? [87.31, 82.41, 73.42, 65.41] : boss ? [73.42, 73.42, 87.31, 65.41] : dembow ? [110, 98, 87.31, 82.41] : dnb ? [55, 49, 43.65, 41.2] : [110, 87.31, 130.81, 98];
+  const roots = lofi ? [87.31, 82.41, 73.42, 65.41] : boss ? [73.42, 73.42, 87.31, 65.41] : dembow ? [110, 98, 87.31, 82.41] : dnb ? [55, 49, 43.65, 41.2] : chip ? [130.81, 110, 87.31, 98] : [110, 87.31, 130.81, 98];
   const third = [1.189, 1.26, 1.26, 1.26], tune = lofi ? [2, 2.52, 3, 3.78] : boss ? [2, 2.38, 3, 2.83] : dembow ? [2, 2.38, 3, 2.67] : dnb ? [4, 4.76, 6, 5.34] : null;
   for (let bar = 0; bar < st.bars; bar++) {
     const t0 = bar * 4 * beat, r = roots[bar % 4], intro = bar < 2, outro = bar === st.bars - 1;
@@ -1749,16 +1755,28 @@ async function renderStarter(st) {
       if (!st.style && (b === 0 || b === 2)) kick(t);
       if (st.swingKick && b === 1) kick(t + beat / 2);
       if (dembow) kick(t);
-      if (!dembow && (b === 1 || b === 3)) snare(t, lofi ? 0.5 : 1);
+      if (!dembow && !chip && (b === 1 || b === 3)) snare(t, lofi ? 0.5 : 1);
+      if (chip && (b === 1 || b === 3)) crunch(t, 0.12, 0.45);
     }
     if (!intro && lofi) [0, 7, 10].forEach(k => kick(t0 + k * s16));
     if (!intro && dembow) DEMBOW_SNARE.forEach(k => snare(t0 + k * s16, 0.75));
     if (!intro && dnb) { DNB_KICK.forEach(k => kick(t0 + k * s16)); DNB_GHOST.forEach(k => snare(t0 + k * s16, 0.35)); }
+    if (!intro && chip) {
+      CHIP_KICK.forEach(k => kick(t0 + k * s16));
+      // the tune: chord notes jumping around on the rhythm the circles follow, with a quiet echo an octave up
+      const pat = CHIP_NOTES.insane, steps = [1, 1.5, 2, 1.26, 3, 2, 1.5, 2.52];
+      pat.forEach((k, i) => {
+        const f = r * 2 * steps[(i + bar) % steps.length];
+        beep(t0 + k * s16, f, s16 * 1.6, 0.09);
+        if (bar >= 6) beep(t0 + k * s16 + s16 * 0.5, f * 2, s16 * 0.4, 0.03);
+      });
+    }
     if (!intro && boss) { BOSS_KICK.forEach(k => kick(t0 + k * s16)); if (bar % 4 === 3) [13, 14, 15].forEach(k => snare(t0 + k * s16, 0.8)); }
     if (!intro) {
-      for (let h = 0; h < st.hats; h++) hat(t0 + h * 4 * beat / st.hats + (lofi && h % 2 ? beat * 0.17 : 0), h % 2 ? 0.1 : 0.16, lofi ? 0.02 : 0.012);   // lo-fi hats swing
+      if (chip) for (let h = 0; h < 8; h++) crunch(t0 + h * beat / 2, 0.03, h % 2 ? 0.08 : 0.14);
+      else for (let h = 0; h < st.hats; h++) hat(t0 + h * 4 * beat / st.hats + (lofi && h % 2 ? beat * 0.17 : 0), h % 2 ? 0.1 : 0.16, lofi ? 0.02 : 0.012);   // lo-fi hats swing
       for (let e = 0; e < 8; e++) bass(t0 + e * beat / 2, e % 4 === 3 ? r * 1.5 : r, beat / 2 * 0.9);
-      if (bar >= 4) {   // little tune on top after the first few bars
+      if (bar >= 4 && !chip) {   // little tune on top after the first few bars
         const notes = tune || [2, 2 * third[bar % 4], 3, 4];
         for (let e = 0; e < 8; e++) pluck(t0 + e * beat / 2, r * notes[(e + bar) % 4], beat * 0.6);
       }
@@ -1779,12 +1797,9 @@ function starterNotes(st) {
   const place = t => { const a = rnd() * Math.PI * 2, d = 0.5 + rnd() * 0.7; x = clamp1(x + Math.cos(a) * d); y = clamp1(y + Math.sin(a) * d); out.push({ t: Math.round(t * 1000) / 1000, x: Math.round(x * 1000) / 1000, y: Math.round(y * 1000) / 1000 }); };
   // A short "spin break" every 8 bars (about 3 seconds with no circles), so a spinner goes there.
   const breakBars = Math.ceil(3 / (4 * beat)), inBreak = t => { const bar = Math.floor(t / (4 * beat)); return bar > 4 && bar % 8 >= 6 && bar % 8 < 6 + breakBars; };
-  if (st.style === "dnb") {   // circles on the kick and snare
-    for (let bar = 2; bar < st.bars - 1; bar++) DNB_NOTES[diff].forEach(k => place((bar * 16 + k) * beat / 4));
-    return out.filter(n => !inBreak(n.t));
-  }
-  if (st.style === "dembow") {   // circles on the kicks; harder levels add the dembow snare hits
-    for (let bar = 2; bar < st.bars - 1; bar++) DEMBOW_NOTES[diff].forEach(k => place((bar * 16 + k) * beat / 4));
+  // drum & bass: the kick and snare. Dembow: the kicks, plus its snare on harder levels. Pixel Quest: the tune's notes.
+  if (STYLE_NOTES[st.style]) {
+    for (let bar = 2; bar < st.bars - 1; bar++) STYLE_NOTES[st.style][diff].forEach(k => place((bar * 16 + k) * beat / 4));
     return out.filter(n => !inBreak(n.t));
   }
   if (st.style === 'boss') {   // circles follow the tricky rhythm, plus the snare rolls on Insane
