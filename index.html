@@ -200,6 +200,7 @@
       <button data-tool="circle">● Circle</button>
       <button data-tool="trail">〰 Trail</button>
       <button data-tool="spin">⟳ Spinner</button>
+      <button data-tool="double">◎◎ Double</button>
       <button id="mkSnap"></button>
       <button id="mkUndo">↶ Undo</button>
       <button id="mkRestart">⟲ Start over</button>
@@ -749,7 +750,7 @@ function newGame(mode, id) {
     }
     // Trails and spinners: planned for music files and starter levels; a level someone made keeps its own.
     G.specials = !G.level || String(id).startsWith('st:') ? planSpecials(G.fileNotes)
-      : G.level.notes.map(n => n.slide ? { slide: n.slide, path: n.path } : n.spin ? { spin: n.spin } : null);
+      : G.level.notes.map(n => n.slide ? { slide: n.slide, path: n.path } : n.spin ? { spin: n.spin } : n.pair ? { pair: n.pair } : null);
     // If the first circle comes very early, wait a moment before the song starts so it has time to fly in.
     const lead = Math.max(0.1, LEVELS[diff].approach + 0.3 - (G.fileNotes[0] ?? 9));
     fileSrc = actx.createBufferSource(); fileSrc.buffer = audioBuf; fileSrc.connect(musicOut());
@@ -888,11 +889,12 @@ function planSpecials(times) {
   return out;
 }
 // A second circle next to this one, on the same beat (a DOUBLE): sweep your mouse through both.
-function addPartner(n) {
+function addPartner(n, at) {   // at = a spot someone picked in the level maker ([x, y] from -1 to 1)
   if (!n || n.pair || n.spin || n.slide || n.word) return n;
   const b = midBox(), D = LEVELS[diff].radius * 2.4;
   let a = Math.random() < 0.5 ? 0 : Math.PI, x, y;
-  for (let k = 0; k < 8; k++, a += Math.PI / 4) {   // pick a side where it fits in the middle box
+  if (at) { x = b.cx + at[0] * b.hx; y = b.cy + at[1] * b.hy; }
+  else for (let k = 0; k < 8; k++, a += Math.PI / 4) {   // pick a side where it fits in the middle box
     x = n.x + Math.cos(a) * D; y = n.y + Math.sin(a) * D * 0.6;
     if (x >= b.cx - b.hx && x <= b.cx + b.hx && y >= b.cy - b.hy && y <= b.cy + b.hy) break;
   }
@@ -903,7 +905,7 @@ function addPartner(n) {
 }
 function setupSpecial(n, sp) {
   if (!n || !sp) return n;
-  if (sp.pair) return addPartner(n);
+  if (sp.pair) return addPartner(n, Array.isArray(sp.pair) ? sp.pair : null);
   const b = midBox();
   if (sp.spin) { Object.assign(n, { spin: sp.spin, x: b.cx, y: b.cy, turns: 0, need: Math.max(2, Math.round(sp.spin * 1.1)), lastA: null }); return n; }
   if (sp.path && sp.path.length >= 2) {   // a trail someone drew in the level maker: use their path
@@ -1441,6 +1443,7 @@ const MK_HELP = {
   circle: 'Click where you want a circle, right on the beat 🎵',
   trail: 'Press where the trail starts, on the beat, then hold and draw the path. Let go where it ends 〰',
   spin: 'Press and hold for as long as the spinner should last ⟳',
+  double: 'Press where the first circle goes, on the beat, then drag to where the second one goes and let go ◎◎',
 };
 function showTool() {
   document.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === mkTool));
@@ -1456,6 +1459,7 @@ mkcv.addEventListener('mousemove', e => {
     const p = mkNorm(e), last = mkDrag.path[mkDrag.path.length - 1], b = midBox();
     if (Math.hypot((p[0] - last[0]) * b.hx, (p[1] - last[1]) * b.hy) > 10 && mkDrag.path.length < 60) mkDrag.path.push(p);
   }
+  if (mkDrag && mkDrag.kind === 'double') mkDrag.end = mkNorm(e);
 });
 mkcv.addEventListener('mousedown', e => {
   if (!MK || MK.over || e.button !== 0) return;
@@ -1474,6 +1478,9 @@ addEventListener('mouseup', () => {
   if (d.kind === 'trail') {
     if (dur >= 0.25 && d.path.length >= 2) MK.notes.push({ t: r3(d.t), x: d.x, y: d.y, slide: Math.min(dur, 5), path: d.path });
     else MK.notes.push({ t: r3(d.t), x: d.x, y: d.y });   // too short to be a trail: just a circle
+  } else if (d.kind === 'double') {
+    const b = midBox(), e = d.end, far = e && Math.hypot((e[0] - d.x) * b.hx, (e[1] - d.y) * b.hy) >= LEVELS[diff].radius * 1.5;
+    MK.notes.push(far ? { t: r3(d.t), x: d.x, y: d.y, pair: e } : { t: r3(d.t), x: d.x, y: d.y });   // dragged too little: just a circle
   } else if (dur >= 0.8) MK.notes.push({ t: r3(d.t), x: 0, y: 0, spin: Math.min(dur, 10) });
 });
 // Snap to beat: a click a little early or late moves onto the song's real beat (or the halfway point between beats).
@@ -1549,22 +1556,37 @@ function drawMaker() {
     if (n.slide && n.path && d > -0.5 && d < n.slide + 0.3) { mg.globalAlpha = d < 0 ? 0.4 : 1; drawPath(n.path, d >= 0 && d <= n.slide ? d / n.slide : -1); }
   }
   mg.globalAlpha = 1;
+  const drawLink = (n, p2) => {   // the dashed line between the two circles of a double
+    const [x1, y1] = toScreen([n.x, n.y]), [x2, y2] = toScreen(p2);
+    mg.strokeStyle = '#fff'; mg.lineWidth = 8; mg.setLineDash([18, 12]);
+    mg.beginPath(); mg.moveTo(x1, y1); mg.lineTo(x2, y2); mg.stroke(); mg.setLineDash([]);
+  };
   if (mkDrag) {   // the one you're making right now
     if (mkDrag.kind === 'trail') drawPath(mkDrag.path, -1);
+    else if (mkDrag.kind === 'double') {
+      const [x1, y1] = toScreen([mkDrag.x, mkDrag.y]); mg.strokeStyle = '#3dd6ff'; mg.lineWidth = 3; mg.beginPath(); mg.arc(x1, y1, r, 0, 7); mg.stroke();
+      if (mkDrag.end) { drawLink(mkDrag, mkDrag.end); const [x2, y2] = toScreen(mkDrag.end); mg.beginPath(); mg.arc(x2, y2, r, 0, 7); mg.stroke(); }
+    }
     else drawSpin(Math.min(1, (t - mkDrag.t) / 4), (t - mkDrag.t).toFixed(1) + ' s');
   }
   for (const n of all) {
     if (n.spin) continue;
     const d = t - n.t; if (d < -0.5 || d > 0.7) continue;
+    const spots = n.pair ? [[n.x, n.y], n.pair] : [[n.x, n.y]];
     if (d < 0) {
-      mg.globalAlpha = (1 + d / 0.5) * 0.6; mg.strokeStyle = '#3dd6ff'; mg.lineWidth = 3;
-      mg.beginPath(); mg.arc(b.cx + n.x * b.hx, b.cy + n.y * b.hy, r, 0, 7); mg.stroke(); continue;
+      mg.globalAlpha = (1 + d / 0.5) * 0.6; if (n.pair) drawLink(n, n.pair);
+      mg.strokeStyle = '#3dd6ff'; mg.lineWidth = 3;
+      for (const q of spots) { const [x, y] = toScreen(q); mg.beginPath(); mg.arc(x, y, r, 0, 7); mg.stroke(); }
+      continue;
     }
-    const x = b.cx + n.x * b.hx, y = b.cy + n.y * b.hy, k = d / 0.7;
+    const k = d / 0.7;
     mg.globalAlpha = 1 - k;
-    mg.fillStyle = '#3dd6ff'; mg.beginPath(); mg.arc(x, y, r * (1 + k * 0.3), 0, 7); mg.fill();
-    mg.fillStyle = '#0d0b1a'; mg.beginPath(); mg.arc(x, y, r * 0.72 * (1 + k * 0.3), 0, 7); mg.fill();
-    mg.strokeStyle = '#fff'; mg.lineWidth = 3; mg.beginPath(); mg.arc(x, y, r * (1 + k * 0.3), 0, 7); mg.stroke();
+    for (const q of spots) {
+      const [x, y] = toScreen(q);
+      mg.fillStyle = '#3dd6ff'; mg.beginPath(); mg.arc(x, y, r * (1 + k * 0.3), 0, 7); mg.fill();
+      mg.fillStyle = '#0d0b1a'; mg.beginPath(); mg.arc(x, y, r * 0.72 * (1 + k * 0.3), 0, 7); mg.fill();
+      mg.strokeStyle = '#fff'; mg.lineWidth = 3; mg.beginPath(); mg.arc(x, y, r * (1 + k * 0.3), 0, 7); mg.stroke();
+    }
   }
   // a see-through circle where yours would go
   if (mkMouse.x > -999 && !MK.over) {
@@ -1576,8 +1598,8 @@ function drawMaker() {
   const bx = 20, bw = W - 40, by = H - 26;
   mg.fillStyle = '#2b2550'; mg.fillRect(bx, by, bw, 8);
   mg.fillStyle = '#ff3d8b'; mg.fillRect(bx, by, bw * Math.max(0, Math.min(1, t / dur)), 8);
-  for (const n of all) {   // blue = circle, green = trail, gold = spinner
-    mg.fillStyle = n.spin ? '#ffd23d' : n.slide ? '#7dff9a' : '#3dd6ff';
+  for (const n of all) {   // blue = circle, green = trail, gold = spinner, white = double
+    mg.fillStyle = n.spin ? '#ffd23d' : n.slide ? '#7dff9a' : n.pair ? '#fff' : '#3dd6ff';
     const w = n.spin || n.slide ? Math.max(2, bw * (n.spin || n.slide) / dur) : 2;
     mg.fillRect(bx + bw * n.t / dur - 1, by - 6, w, 6);
   }
@@ -1665,6 +1687,7 @@ $('lvFile').onchange = async () => {
         const path = n.path.slice(0, 60).map(p => [clamp1(+(p && p[0])), clamp1(+(p && p[1]))]).filter(p => isFinite(p[0]) && isFinite(p[1]));
         if (path.length >= 2) { c.slide = Math.min(5, Math.max(0.2, +n.slide)); c.path = path; }
       }
+      else if (Array.isArray(n.pair) && isFinite(+n.pair[0]) && isFinite(+n.pair[1])) c.pair = [clamp1(+n.pair[0]), clamp1(+n.pair[1])];
       return c;
     }).filter(n => isFinite(n.t) && isFinite(n.x) && isFinite(n.y) && n.t >= 0).sort((a, b) => a.t - b.t).slice(0, 20000);
     if (!notes.length) throw 0;
