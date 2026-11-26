@@ -694,10 +694,15 @@ function newGame(mode, id) {
     G.level = G_level;
     if (G.level) G.fileNotes = G.level.notes.map(n => n.t);   // a level someone made: their circles, their spots
     else if (fileGrid.length > 8) {
-      // On the song's beats (Easy: every other beat). Hard and Insane also get the in-between hits the song really has.
-      const notes = [];
+      // On the song's beats, or every other beat if they come too fast for your level (then the half with more
+      // real drum hits). Hard and Insane also get the in-between hits the song really has.
+      const notes = [], gaps = fileGrid.slice(1).map((t, i) => t - fileGrid[i]).sort((a, b) => a - b);
+      const stride = beatStride(gaps[gaps.length >> 1]);
+      const onHit = t => fileOnsets.some(o => Math.abs(o - t) < 0.04);
+      let parity = 0;
+      if (stride === 2) parity = fileGrid.filter((t, i) => i % 2 === 1 && onHit(t)).length > fileGrid.filter((t, i) => i % 2 === 0 && onHit(t)).length ? 1 : 0;
       fileGrid.forEach((t, i) => {
-        if (t >= 1.5 && (diff !== 'easy' || i % 2 === 0)) notes.push(t);
+        if (t >= 1.5 && (stride === 1 || i % stride === parity)) notes.push(t);
         const nx = fileGrid[i + 1];
         if ((diff === 'hard' || diff === 'insane') && nx && nx - t > 0.32) {
           const half = (t + nx) / 2;
@@ -836,6 +841,26 @@ function heardHit(time) {
   return v > (mean / m) * 2.5;
 }
 
+// How many circles a minute feel good to reach with the mouse on each level. When a song's beat is faster
+// than that (some songs come out at 140-180 BPM), circles go on every other beat instead.
+const MAX_PER_MIN = { easy: 65, normal: 130, hard: 200, insane: 300 };
+function beatStride(p) { return Math.max(1, Math.ceil(60 / p / MAX_PER_MIN[diff] - 0.05)); }
+// How hard the music hit on the beats one, two, three and four steps back from a time (the song just heard).
+function pastHits(time, step) {
+  let s = 0;
+  for (let j = 0; j < 4; j++) s += hitStrength(time - j * step);
+  return s;
+}
+function hitStrength(time) {
+  time += syncMs / 1000;
+  const n = Math.min(hopN, KEEP - 10); if (n < 50) return 0;
+  const tEnd = hopT[(hopN - 1) % KEEP], dt = (tEnd - hopT[(hopN - n) % KEEP]) / (n - 1);
+  const back = Math.round((tEnd - time) / dt); if (back < 2 || back > n - 3) return 0;
+  let v = 0;
+  for (let d = -2; d <= 2; d++) v = Math.max(v, hopO[(hopN - 1 - back + d) % KEEP]);
+  return v;
+}
+
 function spawnNotes(t) {
   const L = LEVELS[diff];
   if (G.mode === 'file') {
@@ -851,11 +876,12 @@ function spawnNotes(t) {
   // Next beats after the ones already sent, lined up with the beat finder.
   let next = beat.last + Math.ceil((Math.max(G.nextBeat, t + 0.3) - beat.last) / p) * p;
   if (G.nextBeat && next - G.nextBeat < p * 0.6) next += p;
+  const stride = beatStride(p);
   while (next <= t + ap) {
     G.beatCount++;
-    const k = G.beatCount;
-    // A circle on every beat (Easy: every other beat). Nothing random: only where the song's beat is.
-    if (diff !== 'easy' || k % 2 === 0) makeNote(next);
+    // A circle on every beat, or every other beat when the beats come too fast for your level.
+    // Nothing random: only where the song's beat is. Every other beat = the ones with the stronger drum hits.
+    if (stride === 1 || pastHits(next - 4 * p, p * stride) >= pastHits(next - 5 * p, p * stride)) makeNote(next);
     if (diff === 'hard' || diff === 'insane') {
       // Copy the song: if it had a hit halfway between beats one or two bars ago, it gets a circle there too.
       if (p > 0.32 && (heardHit(next + p / 2 - 4 * p) || heardHit(next + p / 2 - 8 * p))) makeNote(next + p / 2);
