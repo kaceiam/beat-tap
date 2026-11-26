@@ -148,6 +148,7 @@
   <div id="mkTop">
     <div><div class="big" id="mkTitle"></div><div class="hint" id="mkInfo"></div></div>
     <div class="row">
+      <button id="mkSnap"></button>
       <button id="mkUndo">↶ Undo</button>
       <button id="mkRestart">⟲ Start over</button>
       <button class="go" id="mkDone">✓ Done</button>
@@ -1056,8 +1057,11 @@ $('mkFile').onchange = async () => {
   const bytes = await f.arrayBuffer();
   try { buf = await actx.decodeAudioData(bytes.slice(0)); }
   catch { $('mkMsg').textContent = "That file didn't work. Try an MP3."; return; }
+  $('mkMsg').textContent = 'Finding the beats...';
+  await new Promise(r => setTimeout(r, 30));
+  const grid = fileBeatGrid(buf);
   $('mkMsg').textContent = '';
-  MK = { bytes, type: f.type || 'audio/mpeg', fileName: f.name, name: f.name.replace(/\.[^.]+$/, ''), buf, notes: [], base: [] };
+  MK = { grid, bytes, type: f.type || 'audio/mpeg', fileName: f.name, name: f.name.replace(/\.[^.]+$/, ''), buf, notes: [], base: [] };
   startMaker();
 };
 function startMaker() {
@@ -1093,12 +1097,30 @@ mkcv.addEventListener('contextmenu', e => {
 mkcv.addEventListener('mousemove', e => { mkMouse.x = e.clientX; mkMouse.y = e.clientY; });
 mkcv.addEventListener('mousedown', e => {
   if (!MK || MK.over) return;
-  const t = mkTime(); if (t < 0) return;
+  let t = mkTime(); if (t < 0) return;
+  t = mkSnapTime(t);
   const b = midBox();
   MK.notes.push({ t: Math.round(t * 1000) / 1000,
                   x: Math.round(clamp1((e.clientX - b.cx) / b.hx) * 1000) / 1000,
                   y: Math.round(clamp1((e.clientY - b.cy) / b.hy) * 1000) / 1000 });
 });
+// Snap to beat: a click a little early or late moves onto the song's real beat (or the halfway point between beats).
+let mkSnap = store.get('snap', true);
+function showSnap() { $('mkSnap').textContent = mkSnap ? '🧲 Snap to beat: ON' : '🧲 Snap to beat: OFF'; $('mkSnap').classList.toggle('on', mkSnap); }
+$('mkSnap').onclick = () => { mkSnap = !mkSnap; store.set('snap', mkSnap); showSnap(); };
+showSnap();
+function mkSnapTime(t) {
+  const grid = MK.grid || [];
+  if (!mkSnap || grid.length < 8) return t;
+  let lo = 0, hi = grid.length - 1;
+  while (lo <= hi) { const m = (lo + hi) >> 1; if (grid[m] < t) lo = m + 1; else hi = m - 1; }
+  let bestT = t, bestD = 0.1;   // only snap if it's within a tenth of a second
+  for (let k = Math.max(0, lo - 2); k <= Math.min(grid.length - 1, lo + 1); k++) {
+    const opts = [grid[k]]; if (grid[k + 1] && grid[k + 1] - grid[k] > 0.3) opts.push((grid[k] + grid[k + 1]) / 2);
+    for (const o of opts) if (Math.abs(o - t) < bestD) { bestD = Math.abs(o - t); bestT = o; }
+  }
+  return bestT;
+}
 $('mkUndo').onclick = mkUndo;
 $('mkRestart').onclick = () => { if (MK) startMaker(); };
 $('mkDone').onclick = () => endMaker();
@@ -1172,13 +1194,16 @@ async function playLevel(id) {
 }
 async function editLevel(id) {
   const lv = await idb.get(id); if (!lv) return;
-  mkMsg.textContent = 'Loading...';
+  $('mkMsg').textContent = 'Loading...';
   ensureCtx();
   let buf;
   try { buf = await actx.decodeAudioData(lv.audio.slice(0)); }
-  catch { mkMsg.textContent = "That level's song didn't load."; return; }
-  mkMsg.textContent = '';
-  MK = { bytes: lv.audio, type: lv.type, fileName: lv.fileName, name: lv.name, buf, notes: [], base: lv.notes.slice(), editId: lv.id, made: lv.made };
+  catch { $('mkMsg').textContent = "That level's song didn't load."; return; }
+  $('mkMsg').textContent = 'Finding the beats...';
+  await new Promise(r => setTimeout(r, 30));
+  const grid = fileBeatGrid(buf);
+  $('mkMsg').textContent = '';
+  MK = { grid, bytes: lv.audio, type: lv.type, fileName: lv.fileName, name: lv.name, buf, notes: [], base: lv.notes.slice(), editId: lv.id, made: lv.made };
   startMaker();
 }
 async function drawLevels() {
