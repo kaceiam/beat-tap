@@ -50,6 +50,7 @@
   #lyrics .cur { font-size: 30px; font-weight: 800; color: #fff; }
   #lyrics .nxt { font-size: 18px; color: #8f88bb; margin-top: 4px; }
   #lyrBtn { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); font-size: 14px; padding: 6px 12px; background: #2b2550cc; z-index: 2; }
+  #beatInfo { position: absolute; right: 12px; bottom: 12px; font: 12px/1.45 ui-monospace, Consolas, monospace; background: #000a; color: #cfe; padding: 6px 9px; border-radius: 8px; pointer-events: none; z-index: 3; white-space: pre; }
   #help { position: absolute; bottom: 12px; left: 16px; color: #b9b3dd; font-size: 14px; pointer-events: none; }
 
   #maker canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; }
@@ -162,6 +163,11 @@
         <button id="syncMinus">−</button><span id="syncVal" class="hint" style="min-width:64px;text-align:center"></span><button id="syncPlus">+</button>
         <button id="syncReset">Reset</button>
       </div>
+      <div class="row" style="margin-bottom:4px">
+        <span style="min-width:250px">🔍 Beat info corner (for testing)</span>
+        <button id="infoBtn"></button>
+        <span class="hint">Shows the speed, how sure the game is, and if it can hear your music.</span>
+      </div>
       <p class="hint" style="margin:0">Saved on this computer. During a song you can also press <span class="key">←</span> or <span class="key">→</span>.</p>
     </div>
   </div>
@@ -177,6 +183,7 @@
   <div id="msg"></div>
   <div id="lyrics"></div>
   <button id="lyrBtn" style="display:none"></button>
+  <div id="beatInfo" hidden></div>
   <div id="help"><span class="key">Esc</span> <span id="escWord">stop</span> · Circles early or late? Press <span class="key">←</span> or <span class="key">→</span></div>
 </div>
 
@@ -1074,6 +1081,7 @@ function loop() {
   } else $('msg').innerHTML = '';
 
   const t = now();
+  drawBeatInfo();
   if (!G.over && !G.paused) {
     if (G.mode === 'file' || (G.heardAt && actx.currentTime - G.heardAt > START_AFTER && !G.quietSince)) spawnNotes(t);
     spawnWords(t);
@@ -1519,6 +1527,38 @@ $('howOk').onclick = closeHow; $('howSkip').onclick = closeHow;
 $('howBtn').onclick = () => $('howTo').classList.add('show');
 if (!store.get('seenHow', false)) $('howTo').classList.add('show');
 
+// Beat info corner: a little box with what the beat finder is doing, to see what went wrong if circles feel off.
+let showInfo = store.get("beatInfoOn", false), infoAt = 0;   // (not "info": that one holds your song names)
+function showInfoBtn() { $("infoBtn").textContent = showInfo ? "ON" : "OFF"; $("infoBtn").classList.toggle("on", showInfo); }
+$("infoBtn").onclick = () => { showInfo = !showInfo; store.set("beatInfoOn", showInfo); showInfoBtn(); };
+function drawBeatInfo() {
+  const box = $("beatInfo");
+  box.hidden = !showInfo || !G;
+  if (box.hidden || performance.now() - infoAt < 250) return;
+  infoAt = performance.now();
+  const timing = 'timing     ' + (syncMs > 0 ? '+' : '') + syncMs + ' ms';
+  if (G.mode !== 'listen') {
+    const gaps = fileGrid.slice(1).map((t, i) => t - fileGrid[i]).sort((a, b) => a - b), mid = gaps[gaps.length >> 1];
+    box.textContent = [
+      'music file' + (G.practice ? ' (practice 0.75x)' : ''),
+      'speed      ' + (String(G.id).startsWith('st:') ? (STARTERS.find(s => 'st:' + s.key === G.id) || {}).bpm + ' BPM (starter)'
+        : G.level ? 'circles placed by hand' : mid ? Math.round(60 / mid) + ' BPM' : '-'),
+      'circles    ' + (G.fileNotes ? G.fileNotes.length : 0),
+      timing,
+    ].join('\n');
+    return;
+  }
+  const hearing = !stream ? 'NO - not sharing sound' : curLoud > LOUD ? 'yes (level ' + curLoud.toFixed(0) + ')' : 'silence';
+  box.textContent = [
+    'listening  ' + hearing,
+    'speed      ' + (beat.period ? Math.round(60 / beat.period) + ' BPM' : 'finding...'),
+    'sure       ' + beat.sure.toFixed(1) + (beat.sure >= 3 ? ' (ok)' : ' (low)'),
+    'locked     ' + (beatReady() ? 'yes' : 'no (' + Math.min(beat.stable, STABLE_NEEDED) + '/' + STABLE_NEEDED + ')'),
+    'circles    every ' + beatStride(beat.period || 0.5) + ' beat(s)',
+    timing,
+  ].join('\n');
+}
+showInfoBtn();
 showDiff(); showSync(); showPractice(); drawSongs(); fetchNames(); drawLevels();
 requestAnimationFrame(loop);
 </script>
