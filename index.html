@@ -262,7 +262,8 @@
       2. <b>Move your mouse inside a circle</b> when it gets big. <b>No clicking!</b><br>
       3. Right on the beat = <b style="color:#ffd23d">PERFECT</b>. Keep hitting them for a big combo.<br>
       4. <b style="color:#ff3d8b">Pink circles</b> are words from the song.<br>
-      5. Pick <b>Easy</b> to start. <b>Insane</b> is every beat. Press <span class="key">Esc</span> to pause or stop.
+      5. <b style="color:#7dff9a">Green circles</b> have a trail: follow the ball with your mouse. A <b style="color:#ffd23d">gold ring</b> in the middle: circle your mouse around it!<br>
+      6. Pick <b>Easy</b> to start. <b>Insane</b> is every beat. Press <span class="key">Esc</span> to pause or stop.
     </p>
     <p class="hint">Play a song in your Spotify app, play a music file, or make your own level.</p>
     <div class="row" style="justify-content:center">
@@ -739,6 +740,9 @@ function newGame(mode, id) {
       let last = -9; const gap = LEVELS[diff].gap;
       G.fileNotes = fileOnsets.filter(t => { if (t < 1.5 || t - last < gap) return false; last = t; return true; });
     }
+    // Trails and spinners: planned for music files and starter levels; a level someone made keeps its own.
+    G.specials = !G.level || String(id).startsWith('st:') ? planSpecials(G.fileNotes)
+      : G.level.notes.map(n => n.slide ? { slide: n.slide } : n.spin ? { spin: n.spin } : null);
     // If the first circle comes very early, wait a moment before the song starts so it has time to fly in.
     const lead = Math.max(0.1, LEVELS[diff].approach + 0.3 - (G.fileNotes[0] ?? 9));
     fileSrc = actx.createBufferSource(); fileSrc.buffer = audioBuf; fileSrc.connect(musicOut());
@@ -849,8 +853,104 @@ function midBox() {
 // A circle from a level someone made: x and y go from -1 to 1 across the middle box.
 function placeNote(ln) {
   const b = midBox(), x = b.cx + ln.x * b.hx, y = b.cy + ln.y * b.hy;
-  G.notes.push({ t: ln.t, x, y, done: false, ap: LEVELS[diff].approach });
+  const n = { t: ln.t, x, y, done: false, ap: LEVELS[diff].approach };
+  G.notes.push(n);
   G.lastPos = { x, y };
+  return n;
+}
+
+// ---------- trails and spinners (still mouse-only) ----------
+// TRAIL (green): reach the circle, then follow the ball along the path with your mouse.
+// SPINNER (gold ring in the middle): circle your mouse around it as many times as it asks.
+// They only go where the music leaves room: a spinner in a long gap, a trail now and then.
+function planSpecials(times) {
+  const out = []; let since = 0;
+  for (let i = 0; i < times.length; i++) {
+    const gap = (times[i + 1] ?? times[i] + 3) - times[i];
+    if (gap >= 2.5 && i < times.length - 1) { out[i] = { spin: gap - 0.7 }; since = 0; continue; }
+    since++;
+    if (since < 6) continue;
+    if (gap >= 0.7) { out[i] = { slide: Math.min(gap - 0.3, 1.4) }; since = 0; continue; }
+    // Circles close together? The trail can run over the next one instead (that circle is left out).
+    const g2 = (times[i + 2] ?? Infinity) - times[i];
+    if (g2 >= 0.8 && g2 <= 1.6 && !out[i + 1]) { out[i] = { slide: g2 - 0.3 }; out[i + 1] = { skip: true }; since = 0; i++; }
+  }
+  return out;
+}
+function setupSpecial(n, sp) {
+  if (!n || !sp) return n;
+  const b = midBox();
+  if (sp.spin) { Object.assign(n, { spin: sp.spin, x: b.cx, y: b.cy, turns: 0, need: Math.max(2, Math.round(sp.spin * 1.1)), lastA: null }); return n; }
+  const len = Math.min(b.hx, b.hy) * (1.1 + Math.random() * 0.6), a0 = Math.atan2(b.cy - n.y, b.cx - n.x) + (Math.random() - 0.5) * 1.2;
+  const bend = (Math.random() < 0.5 ? 1 : -1) * len * 0.45;
+  const ex = n.x + Math.cos(a0) * len, ey = n.y + Math.sin(a0) * len;
+  const mx = (n.x + ex) / 2 - Math.sin(a0) * bend, my = (n.y + ey) / 2 + Math.cos(a0) * bend;
+  const pts = [];
+  for (let i = 0; i <= 24; i++) {
+    const u = i / 24, x = (1 - u) * (1 - u) * n.x + 2 * (1 - u) * u * mx + u * u * ex, y = (1 - u) * (1 - u) * n.y + 2 * (1 - u) * u * my + u * u * ey;
+    pts.push({ x: Math.min(b.cx + b.hx, Math.max(b.cx - b.hx, x)), y: Math.min(b.cy + b.hy, Math.max(b.cy - b.hy, y)) });
+  }
+  Object.assign(n, { slide: sp.slide, pts, on: 0, total: 0 });
+  G.lastPos = pts[pts.length - 1];
+  return n;
+}
+function along(pts, k) {
+  const f = Math.min(1, Math.max(0, k)) * (pts.length - 1), i = Math.min(pts.length - 2, Math.floor(f)), w = f - i;
+  return { x: pts[i].x + (pts[i + 1].x - pts[i].x) * w, y: pts[i].y + (pts[i + 1].y - pts[i].y) * w };
+}
+function spinTick(n, t) {
+  if (t < n.t) return;
+  const dx = mouse.x - n.x, dy = mouse.y - n.y;
+  if (Math.hypot(dx, dy) > 30) {   // (right in the middle doesn't count)
+    const a = Math.atan2(dy, dx);
+    if (n.lastA !== null) {
+      let d = a - n.lastA; if (d > Math.PI) d -= 2 * Math.PI; if (d < -Math.PI) d += 2 * Math.PI;
+      const before = Math.floor(n.turns); n.turns += Math.abs(d) / (2 * Math.PI);
+      if (Math.floor(n.turns) > before) { const pts = 100 * multOf(G.combo); G.score += pts; popText(n.x, n.y - 30, '+' + pts, '#ffd23d'); updateHud(); }
+    }
+    n.lastA = a;
+  }
+  if (t >= n.t + n.spin) endSpecial(n, n.turns >= n.need, 'SPIN!', 'TOO SLOW');
+}
+function slideTick(n, t) {
+  const k = (t - n.t) / n.slide, b = along(n.pts, k);
+  n.total++; if (Math.hypot(b.x - mouse.x, b.y - mouse.y) <= LEVELS[diff].radius * 1.3) n.on++;
+  if (k >= 1) endSpecial(n, n.on / n.total >= 0.7, 'TRAIL!', 'SLIPPED', b);
+}
+function endSpecial(n, ok, yes, no, at) {
+  const p = at || { x: n.x, y: n.y };
+  n.done = true; n.sliding = false; n.hitAt = performance.now(); n.hx = p.x; n.hy = p.y; n.hs = 1; n.missed = !ok;
+  if (ok) { G.combo++; G.maxCombo = Math.max(G.maxCombo, G.combo); G.score += 300 * multOf(G.combo); G.flash = 1; }
+  else G.combo = 0;
+  popText(p.x, p.y - 70, ok ? yes : no, ok ? '#7dff9a' : '#ff4d4d'); updateHud();
+}
+function drawSpecial(n, t, far) {
+  const r = LEVELS[diff].radius;
+  if (n.spin) {
+    const R = Math.min(W, H) * 0.2, k = t < n.t ? 0 : Math.min(1, (t - n.t) / n.spin);
+    g.globalAlpha = Math.min(1, (1 - far) * 3);
+    g.strokeStyle = '#ffd23d55'; g.lineWidth = 10; g.beginPath(); g.arc(n.x, n.y, R, 0, 7); g.stroke();
+    g.strokeStyle = '#ffd23d'; g.beginPath(); g.arc(n.x, n.y, R, -Math.PI / 2, -Math.PI / 2 + Math.min(1, n.turns / n.need) * Math.PI * 2); g.stroke();   // how far you are
+    g.strokeStyle = '#ffffff88'; g.lineWidth = 3; g.beginPath(); g.arc(n.x, n.y, R + 14, -Math.PI / 2, -Math.PI / 2 + (1 - k) * Math.PI * 2); g.stroke();   // time left
+    g.fillStyle = '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = 'bold 30px system-ui';
+    g.fillText(t < n.t ? 'SPIN IT! ⟳' : Math.floor(n.turns) + ' / ' + n.need, n.x, n.y);
+    g.globalAlpha = 1;
+    return;
+  }
+  // trail: the path (shows up as the circle gets close), then the ball you follow
+  g.globalAlpha = n.sliding ? 1 : Math.min(1, (1 - far) * 2.5);
+  g.lineCap = 'round'; g.lineJoin = 'round';
+  g.strokeStyle = '#7dff9a33'; g.lineWidth = r * 1.5;
+  g.beginPath(); n.pts.forEach((q, i) => i ? g.lineTo(q.x, q.y) : g.moveTo(q.x, q.y)); g.stroke();
+  g.strokeStyle = '#7dff9a'; g.lineWidth = 3;
+  g.beginPath(); n.pts.forEach((q, i) => i ? g.lineTo(q.x, q.y) : g.moveTo(q.x, q.y)); g.stroke();
+  const e = n.pts[n.pts.length - 1]; g.beginPath(); g.arc(e.x, e.y, r * 0.35, 0, 7); g.stroke();
+  if (n.sliding) {
+    const b = along(n.pts, (t - n.t) / n.slide), on = Math.hypot(b.x - mouse.x, b.y - mouse.y) <= r * 1.3;
+    g.fillStyle = '#7dff9a'; g.beginPath(); g.arc(b.x, b.y, r * 0.5, 0, 7); g.fill();
+    g.strokeStyle = on ? '#fff' : '#ff4d4d'; g.lineWidth = 4; g.beginPath(); g.arc(b.x, b.y, r * 1.3, 0, 7); g.stroke();
+  }
+  g.globalAlpha = 1;
 }
 
 // Did the song have a hit (drum, note) at this moment? Used by Insane to copy the song's extra beats.
@@ -889,8 +989,9 @@ function spawnNotes(t) {
   const L = LEVELS[diff];
   if (G.mode === 'file') {
     while (G.fileIdx < G.fileNotes.length && G.fileNotes[G.fileIdx] - L.approach <= t) {
-      const i = G.fileIdx++;
-      if (G.level) placeNote(G.level.notes[i]); else makeNote(G.fileNotes[i]);
+      const i = G.fileIdx++, sp = G.specials && G.specials[i];
+      if (sp && sp.skip) continue;   // a trail runs over this one
+      setupSpecial(G.level ? placeNote(G.level.notes[i]) : makeNote(G.fileNotes[i]), sp);
     }
     return;
   }
@@ -965,6 +1066,8 @@ function touchNotes(t) {
   const r = LEVELS[diff].radius;
   for (const n of G.notes) {
     if (n.done) continue;
+    if (n.spin) { spinTick(n, t); continue; }
+    if (n.sliding) { slideTick(n, t); continue; }
     if (n.t - t > 0.12 || t - n.t > WIN.ok) continue;   // right around the beat (a little early or late is fine)
     const p = proj(n, t);
     // Your mouse has to be inside the circle (anywhere in it). Getting there a bit early is fine:
@@ -973,6 +1076,7 @@ function touchNotes(t) {
     if (!n.touched || n.t - t > 0.02) continue;
     const d = t < n.t ? 0 : n.t - t;
     judge(n, d);
+    if (n.slide) { n.done = false; n.sliding = true; }   // a trail: now follow the ball
   }
 }
 addEventListener('keydown', e => {
@@ -1087,7 +1191,7 @@ function loop() {
     spawnWords(t);
     touchNotes(t);
     showLyrics(t);
-    for (const n of G.notes) if (!n.done && t - n.t > WIN.ok) miss(n);
+    for (const n of G.notes) if (!n.done && !n.spin && !n.sliding && t - n.t > WIN.ok) miss(n);
   }
   G.notes = G.notes.filter(n => !n.done || real - n.hitAt < 400);
   G.pops = G.pops.filter(p => real - p.born < 700);
@@ -1121,7 +1225,10 @@ function loop() {
       g.globalAlpha = 1; continue;
     }
     const p = proj(n, t), far = Math.max(0, Math.min(1, (n.t - t) / (n.ap || L.approach))), rr = r * p.s;
-    const col = n.word ? '#ff3d8b' : '#3dd6ff';   // pink = a word from the song
+    if (n.spin) { drawSpecial(n, t, far); continue; }
+    if (n.slide) drawSpecial(n, t, far);
+    if (n.sliding) continue;
+    const col = n.word ? '#ff3d8b' : n.slide ? '#7dff9a' : '#3dd6ff';   // pink = a word from the song, green = a trail
     g.globalAlpha = Math.min(1, (1 - far) * 5);
     g.fillStyle = col; g.beginPath(); g.arc(p.x, p.y, rr, 0, 7); g.fill();
     g.fillStyle = '#0d0b1a'; g.beginPath(); g.arc(p.x, p.y, rr * 0.72, 0, 7); g.fill();
@@ -1481,12 +1588,14 @@ function starterNotes(st) {
   let seed = st.bpm * 7 + 3; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
   let x = 0, y = 0;
   const place = t => { const a = rnd() * Math.PI * 2, d = 0.5 + rnd() * 0.7; x = clamp1(x + Math.cos(a) * d); y = clamp1(y + Math.sin(a) * d); out.push({ t: Math.round(t * 1000) / 1000, x: Math.round(x * 1000) / 1000, y: Math.round(y * 1000) / 1000 }); };
+  // A short "spin break" every 8 bars (about 3 seconds with no circles), so a spinner goes there.
+  const breakBars = Math.ceil(3 / (4 * beat)), inBreak = t => { const bar = Math.floor(t / (4 * beat)); return bar > 4 && bar % 8 >= 6 && bar % 8 < 6 + breakBars; };
   if (st.style === 'boss') {   // circles follow the tricky rhythm, plus the snare rolls on Insane
     for (let bar = 2; bar < st.bars - 1; bar++) {
       const hits = BOSS_NOTES[diff].concat(diff === 'insane' && bar % 4 === 3 ? [13, 15] : []).sort((a, b) => a - b);
       hits.forEach(k => place((bar * 16 + k) * beat / 4));
     }
-    return out;
+    return out.filter(n => !inBreak(n.t));
   }
   for (let b = 8; b < (st.bars - 1) * 4; b += step) {
     // Hard: the in-between beats only every other bar. Insane: all of them.
@@ -1495,7 +1604,7 @@ function starterNotes(st) {
     x = clamp1(x + Math.cos(a) * d); y = clamp1(y + Math.sin(a) * d);
     out.push({ t: Math.round(b * beat * 1000) / 1000, x: Math.round(x * 1000) / 1000, y: Math.round(y * 1000) / 1000 });
   }
-  return out;
+  return out.filter(n => !inBreak(n.t));
 }
 async function playStarter(st) {
   ensureCtx();
