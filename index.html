@@ -100,6 +100,7 @@
       <button data-diff="normal">Medium</button>
       <button data-diff="hard">Hard</button>
       <button data-diff="insane">🔥 Insane</button>
+      <button id="practiceBtn" title="Music files, levels and starter levels play at 0.75 speed. Scores don't count."></button>
     </div>
 
     <div class="panel">
@@ -653,13 +654,18 @@ const LEVELS = {
 const WIN = { perfect: 0.06, good: 0.13, ok: 0.2 };
 
 let G = null;
+// Practice mode: music files and levels play slower (0.75x). Best scores aren't saved.
+let practice = store.get('practice', false);
+const RATE = () => (G && G.practice ? 0.75 : 1);
+function showPractice() { $('practiceBtn').textContent = practice ? '🐢 Practice 0.75×: ON' : '🐢 Practice: OFF'; $('practiceBtn').classList.toggle('on', practice); }
+$('practiceBtn').onclick = () => { practice = !practice; store.set('practice', practice); showPractice(); };
 function newGame(mode, id) {
   $('results').classList.remove('show');
   const name = mode === 'file' ? G_fileName : id ? (info[id]?.t || 'Spotify song') : 'Spotify';
   G = { mode, id, name, notes: [], pops: [], bursts: [], trail: [], sparks: [], score: 0, combo: 0, maxCombo: 0, hits: { perfect: 0, good: 0, ok: 0, miss: 0 },
         lastPos: { x: W / 2, y: H / 2 }, over: false, flash: 0, beatCount: 0, nextBeat: 0,
-        heardAt: 0, quietSince: 0, fileIdx: 0, startedAt: actx ? actx.currentTime - 0.5 : 0 };
-  $('songName').textContent = name;
+        heardAt: 0, quietSince: 0, fileIdx: 0, practice: mode === 'file' && practice, startedAt: actx ? actx.currentTime - 0.5 : 0 };
+  $('songName').textContent = name + (G.practice ? '  ·  🐢 practice 0.75×' : '');
   updateHud();
   // Get the song's words.
   G.lyr = null; G.lyrChoices = null; $('lyrBtn').style.display = 'none'; $('lyrics').innerHTML = ''; $('lyrics').dataset.i = '-';
@@ -697,7 +703,8 @@ function newGame(mode, id) {
     // If the first circle comes very early, wait a moment before the song starts so it has time to fly in.
     const lead = Math.max(0.1, LEVELS[diff].approach + 0.3 - (G.fileNotes[0] ?? 9));
     fileSrc = actx.createBufferSource(); fileSrc.buffer = audioBuf; fileSrc.connect(musicOut());
-    fileStartAt = actx.currentTime + lead; fileSrc.start(fileStartAt);
+    fileSrc.playbackRate.value = RATE();
+    fileStartAt = actx.currentTime + lead / RATE(); fileSrc.start(fileStartAt);
     fileSrc.onended = () => { if (G && G.mode === 'file') finish(); };
   }
   $('escWord').textContent = mode === 'file' ? 'pause' : 'stop';
@@ -707,7 +714,7 @@ function newGame(mode, id) {
 function show(name) { document.querySelectorAll('.screen').forEach(s => s.classList.toggle('show', s.id === name)); }
 
 function now() {
-  const t = G.mode === 'file' ? actx.currentTime - fileStartAt : actx.currentTime;
+  const t = G.mode === 'file' ? (actx.currentTime - fileStartAt) * RATE() : actx.currentTime;   // song time (slower in practice)
   return t - syncMs / 1000;
 }
 
@@ -932,8 +939,8 @@ function finish() {
   const a = accuracy();
   const grade = G.hits.miss === 0 && a >= 95 ? 'S' : a >= 90 ? 'A' : a >= 80 ? 'B' : a >= 70 ? 'C' : 'D';
   let newBest = false;
-  if (G.id) { const k = G.id + diff; if (G.score > (best[k] || 0)) { best[k] = G.score; store.set('best', best); newBest = true; } }
-  $('resTitle').textContent = newBest ? 'New best score! 🎉' : G.id && best[G.id + diff] ? 'Song done! Your best: ' + best[G.id + diff].toLocaleString() : 'Song done!';
+  if (G.id && !G.practice) { const k = G.id + diff; if (G.score > (best[k] || 0)) { best[k] = G.score; store.set('best', best); newBest = true; } }
+  $('resTitle').textContent = G.practice ? 'Practice done! 🐢 (scores don’t count)' : newBest ? 'New best score! 🎉' : G.id && best[G.id + diff] ? 'Song done! Your best: ' + best[G.id + diff].toLocaleString() : 'Song done!';
   $('resNext').textContent = G.mode === 'listen' && stream ? 'Play the next song in Spotify and the circles start by themselves.' : '';
   $('resGrade').textContent = grade;
   $('resStats').innerHTML = `Score: <b>${G.score.toLocaleString()}</b><br>Accuracy: <b>${a.toFixed(1)}%</b> · Best combo: <b>${G.maxCombo}x</b><br>` +
@@ -1458,7 +1465,7 @@ $('howOk').onclick = closeHow; $('howSkip').onclick = closeHow;
 $('howBtn').onclick = () => $('howTo').classList.add('show');
 if (!store.get('seenHow', false)) $('howTo').classList.add('show');
 
-showDiff(); showSync(); drawSongs(); fetchNames(); drawLevels();
+showDiff(); showSync(); showPractice(); drawSongs(); fetchNames(); drawLevels();
 requestAnimationFrame(loop);
 </script>
 </body>
