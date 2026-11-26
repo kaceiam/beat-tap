@@ -41,6 +41,9 @@
   #game canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
   #hud { position: absolute; top: 12px; left: 16px; right: 16px; display: flex; justify-content: space-between; pointer-events: none; font-weight: 700; }
   #hud .big { font-size: 30px; }
+  #mult { font-size: 22px; color: #ffd23d; min-height: 26px; }
+  #meter { width: 120px; height: 6px; background: #2b2550; border-radius: 3px; margin: 3px 0 4px auto; overflow: hidden; }
+  #meter i { display: block; height: 100%; width: 0; background: #ffd23d; transition: width .15s; }
   #msg { position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); text-align: center; font-size: 24px; pointer-events: none; text-shadow: 0 2px 8px #000; }
   #lyrics { position: absolute; left: 0; right: 0; bottom: 34px; text-align: center; pointer-events: none; text-shadow: 0 2px 8px #000; padding: 0 16px; }
   #lyrics .cur { font-size: 30px; font-weight: 800; color: #fff; }
@@ -143,7 +146,7 @@
   <canvas id="cv"></canvas>
   <div id="hud">
     <div><div class="big" id="score">0</div><div id="songName"></div></div>
-    <div style="text-align:right"><div class="big" id="combo"></div><div id="acc"></div></div>
+    <div style="text-align:right"><div class="big" id="combo"></div><div id="mult"></div><div id="meter"><i></i></div><div id="acc"></div></div>
   </div>
   <div id="msg"></div>
   <div id="lyrics"></div>
@@ -598,7 +601,7 @@ let G = null;
 function newGame(mode, id) {
   $('results').classList.remove('show');
   const name = mode === 'file' ? G_fileName : id ? (info[id]?.t || 'Spotify song') : 'Spotify';
-  G = { mode, id, name, notes: [], pops: [], score: 0, combo: 0, maxCombo: 0, hits: { perfect: 0, good: 0, ok: 0, miss: 0 },
+  G = { mode, id, name, notes: [], pops: [], bursts: [], score: 0, combo: 0, maxCombo: 0, hits: { perfect: 0, good: 0, ok: 0, miss: 0 },
         lastPos: { x: W / 2, y: H / 2 }, over: false, flash: 0, beatCount: 0, nextBeat: 0,
         heardAt: 0, quietSince: 0, fileIdx: 0, startedAt: actx ? actx.currentTime - 0.5 : 0 };
   $('songName').textContent = name;
@@ -792,21 +795,34 @@ function judge(note, d) {
   const kind = a <= WIN.perfect ? 'perfect' : a <= WIN.good ? 'good' : 'ok';
   const p = proj(note, now()); note.hx = p.x; note.hy = p.y; note.hs = p.s;
   note.done = true; note.hitAt = performance.now();
+  const before = multOf(G.combo);
   G.hits[kind]++; G.combo++; G.maxCombo = Math.max(G.maxCombo, G.combo);
-  G.score += Math.round({ perfect: 300, good: 100, ok: 50 }[kind] * (1 + G.combo / 25));
+  const m = multOf(G.combo);
+  G.score += { perfect: 300, good: 100, ok: 50 }[kind] * m;
+  if (m > before) popText(W / 2, H * 0.2, '×' + m + ' SCORE!', '#ffd23d');
   popText(p.x, p.y - 70 * p.s, { perfect: 'PERFECT', good: 'GOOD', ok: 'OK' }[kind], { perfect: '#ffd23d', good: '#3dffa0', ok: '#3dd6ff' }[kind]);
   G.flash = 1; updateHud();
 }
 function miss(note) {
   const p = proj(note, now()); note.hx = p.x; note.hy = p.y; note.hs = p.s;
   note.done = true; note.missed = true; note.hitAt = performance.now();
+  if (G.combo >= STREAK[0]) {   // a combo of 10+ just broke: little burst
+    G.bursts.push({ x: p.x, y: p.y, born: performance.now() });
+    popText(W / 2, H * 0.2, 'COMBO BROKEN (' + G.combo + ')', '#ff4d4d');
+  }
   G.hits.miss++; G.combo = 0;
   popText(p.x, p.y - 70 * p.s, 'MISS', '#ff4d4d'); updateHud();
 }
+// Score multiplier: x2 at a 10 streak, x4 at 25, x8 at 50.
+const STREAK = [10, 25, 50];
+function multOf(c) { return c >= 50 ? 8 : c >= 25 ? 4 : c >= 10 ? 2 : 1; }
 function popText(x, y, text, color) { G.pops.push({ x, y, text, color, born: performance.now() }); }
 function updateHud() {
   $('score').textContent = G.score.toLocaleString();
-  $('combo').textContent = G.combo > 1 ? G.combo + 'x' : '';
+  $('combo').textContent = G.combo > 1 ? G.combo + ' combo' : '';
+  const m = multOf(G.combo), next = STREAK.find(s => s > G.combo), prev = [0, ...STREAK].filter(s => s <= G.combo).pop();
+  $('mult').textContent = m > 1 ? '×' + m : '';
+  $('meter').firstChild.style.width = (next ? (G.combo - prev) / (next - prev) * 100 : 100) + '%';
   const h = G.hits, total = h.perfect + h.good + h.ok + h.miss;
   $('acc').textContent = total ? accuracy().toFixed(1) + '%' : '';
 }
@@ -971,6 +987,14 @@ function loop() {
       g.fillText(n.word, p.x, p.y);
     } else { g.fillStyle = col; g.beginPath(); g.arc(p.x, p.y, rr * 0.3, 0, 7); g.fill(); }
     g.strokeStyle = '#fff'; g.lineWidth = 3 * p.s; g.beginPath(); g.arc(p.x, p.y, rr, 0, 7); g.stroke();
+    g.globalAlpha = 1;
+  }
+  // combo-broken burst: 14 red bits fly out and fade
+  G.bursts = G.bursts.filter(b => real - b.born < 550);
+  for (const b of G.bursts) {
+    const k = (real - b.born) / 550, dist = 30 + k * 140;
+    g.globalAlpha = 1 - k; g.fillStyle = '#ff4d4d';
+    for (let i = 0; i < 14; i++) { const a = i / 14 * Math.PI * 2; g.fillRect(b.x + Math.cos(a) * dist - 4, b.y + Math.sin(a) * dist - 4, 8, 8); }
     g.globalAlpha = 1;
   }
   for (const p of G.pops) {
