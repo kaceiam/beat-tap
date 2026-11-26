@@ -269,7 +269,7 @@
       2. <b>Move your mouse inside a circle</b> when it gets big. <b>No clicking!</b><br>
       3. Right on the beat = <b style="color:#ffd23d">PERFECT</b>. Keep hitting them for a big combo.<br>
       4. <b style="color:#ff3d8b">Pink circles</b> are words from the song.<br>
-      5. <b style="color:#7dff9a">Green circles</b> have a trail: follow the ball with your mouse. A <b style="color:#ffd23d">gold ring</b> in the middle: circle your mouse around it!<br>
+      5. <b style="color:#7dff9a">Green circles</b> have a trail: follow the ball with your mouse. A <b style="color:#ffd23d">gold ring</b> in the middle: circle your mouse around it! Two circles <b>joined by a line</b>: sweep through both.<br>
       6. Pick <b>Easy</b> to start. <b>Insane</b> is every beat. Press <span class="key">Esc</span> to pause or stop.
     </p>
     <p class="hint">Play a song in your Spotify app, play a music file, or make your own level.</p>
@@ -871,11 +871,14 @@ function placeNote(ln) {
 // SPINNER (gold ring in the middle): circle your mouse around it as many times as it asks.
 // They only go where the music leaves room: a spinner in a long gap, a trail now and then.
 function planSpecials(times) {
-  const out = []; let since = 0;
+  const out = []; let since = 0, sincePair = 0;
   for (let i = 0; i < times.length; i++) {
     const gap = (times[i + 1] ?? times[i] + 3) - times[i];
     if (gap >= 2.5 && i < times.length - 1) { out[i] = { spin: gap - 0.7 }; since = 0; continue; }
-    since++;
+    since++; sincePair++;
+    // DOUBLE circle now and then: two at once, sweep through both. Needs a bit of room before and after.
+    const gapBefore = i ? times[i] - times[i - 1] : 9;
+    if (sincePair >= 7 && since >= 3 && gap >= 0.45 && gapBefore >= 0.45) { out[i] = { pair: true }; sincePair = 0; continue; }
     if (since < 6) continue;
     if (gap >= 0.7) { out[i] = { slide: Math.min(gap - 0.3, 1.4) }; since = 0; continue; }
     // Circles close together? The trail can run over the next one instead (that circle is left out).
@@ -884,8 +887,23 @@ function planSpecials(times) {
   }
   return out;
 }
+// A second circle next to this one, on the same beat (a DOUBLE): sweep your mouse through both.
+function addPartner(n) {
+  if (!n || n.pair || n.spin || n.slide || n.word) return n;
+  const b = midBox(), D = LEVELS[diff].radius * 2.4;
+  let a = Math.random() < 0.5 ? 0 : Math.PI, x, y;
+  for (let k = 0; k < 8; k++, a += Math.PI / 4) {   // pick a side where it fits in the middle box
+    x = n.x + Math.cos(a) * D; y = n.y + Math.sin(a) * D * 0.6;
+    if (x >= b.cx - b.hx && x <= b.cx + b.hx && y >= b.cy - b.hy && y <= b.cy + b.hy) break;
+  }
+  x = Math.min(b.cx + b.hx, Math.max(b.cx - b.hx, x)); y = Math.min(b.cy + b.hy, Math.max(b.cy - b.hy, y));
+  const m = { t: n.t, x, y, done: false, ap: n.ap, pair: n, second: true };
+  n.pair = m; G.notes.push(m); G.lastPos = { x, y };
+  return n;
+}
 function setupSpecial(n, sp) {
   if (!n || !sp) return n;
+  if (sp.pair) return addPartner(n);
   const b = midBox();
   if (sp.spin) { Object.assign(n, { spin: sp.spin, x: b.cx, y: b.cy, turns: 0, need: Math.max(2, Math.round(sp.spin * 1.1)), lastA: null }); return n; }
   if (sp.path && sp.path.length >= 2) {   // a trail someone drew in the level maker: use their path
@@ -1028,7 +1046,11 @@ function spawnNotes(t) {
     G.beatCount++;
     // A circle on every beat, or every other beat when the beats come too fast for your level.
     // Nothing random: only where the song's beat is. Every other beat = the ones with the stronger drum hits.
-    if (stride === 1 || pastHits(next - 4 * p, p * stride) >= pastHits(next - 5 * p, p * stride)) makeNote(next);
+    if (stride === 1 || pastHits(next - 4 * p, p * stride) >= pastHits(next - 5 * p, p * stride)) {
+      const n = makeNote(next);
+      // A DOUBLE circle every few bars, when the circles aren't too close together to sweep.
+      if (G.beatCount - (G.lastPair || 0) >= 14 && p * stride >= 0.45 && G.beatCount > 8) { addPartner(n); G.lastPair = G.beatCount; }
+    }
     if (diff === 'hard' || diff === 'insane') {
       // Copy the song: if it had a hit halfway between beats one or two bars ago, it gets a circle there too.
       if (p > 0.32 && (heardHit(next + p / 2 - 4 * p) || heardHit(next + p / 2 - 8 * p))) makeNote(next + p / 2);
@@ -1090,7 +1112,7 @@ function touchNotes(t) {
     if (n.done) continue;
     if (n.spin) { spinTick(n, t); continue; }
     if (n.sliding) { slideTick(n, t); continue; }
-    if (n.t - t > 0.12 || t - n.t > WIN.ok) continue;   // right around the beat (a little early or late is fine)
+    if (n.t - t > (n.pair ? 0.3 : 0.12) || t - n.t > WIN.ok) continue;   // right around the beat (a little early or late is fine; doubles give more time to sweep)
     const p = proj(n, t);
     // Your mouse has to be inside the circle (anywhere in it). Getting there a bit early is fine:
     // it counts as right on time when the beat comes.
@@ -1278,6 +1300,12 @@ function loop() {
   }
   g.globalAlpha = 1;
 
+  // doubles: a dashed line joins the two circles that come together
+  for (const n of G.notes) if (n.second && !n.done && !n.pair.done) {
+    const a = proj(n, t), b = proj(n.pair, t), far = Math.max(0, Math.min(1, (n.t - t) / (n.ap || L.approach)));
+    g.globalAlpha = Math.min(0.8, (1 - far) * 4); g.strokeStyle = '#fff'; g.lineWidth = 10 * a.s; g.setLineDash([18 * a.s, 12 * a.s]);
+    g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.stroke(); g.setLineDash([]); g.globalAlpha = 1;
+  }
   // circles: farthest first so the closest is on top
   for (const n of [...G.notes].sort((a, b) => b.t - a.t)) {
     const r = L.radius;
